@@ -5,6 +5,8 @@ All tuneable values live here — nothing hardcoded in logic files.
 
 import os
 from dotenv import load_dotenv
+# Try Render secret file path first, then local .env
+load_dotenv('/etc/secrets/.env')
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # API Keys
