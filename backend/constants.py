@@ -51,7 +51,7 @@ THRESHOLDS = {
 }
 
 ALERT_COOLDOWN_SECONDS = 300
-MIN_ARB_PROFIT_PCT = 0.005
+MIN_ARB_PROFIT_PCT = 0.001  # 0.1% — real cross-bookmaker arbs are small
 
 FRED_SERIES = {
     "CPIAUCSL":    {"label": "CPI Inflation (YoY %)", "unit": "percent"},

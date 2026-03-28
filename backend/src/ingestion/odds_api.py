@@ -309,7 +309,7 @@ class OddsAPIClient:
                             no_price=1.0 - r["implied_probability"],
                             raw_odds=r["raw_odds"],
                             last_traded_price=r["raw_odds"],
-                            raw_payload=r.get("metadata", {}),
+                            raw_payload=None,
                             fetched_at=r["timestamp"],
                         )
                     )

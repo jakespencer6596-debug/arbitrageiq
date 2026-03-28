@@ -37,10 +37,20 @@ export default function MarketMap({ markets, health, stats }) {
         </div>
         {/* System health strip */}
         <div className="flex items-center gap-2">
-          <HealthDot status={health?.status} />
-          <span className="text-xs text-gray-500">
-            {health?.status === 'healthy' ? 'All systems go' : health?.status || 'Checking...'}
-          </span>
+          {(() => {
+            const comps = health?.components || platforms || []
+            const allHealthy = comps.length > 0 && comps.every(c => (c.status || '').toLowerCase() === 'healthy')
+            const hasDegraded = comps.some(c => (c.status || '').toLowerCase() === 'degraded')
+            const derivedStatus = comps.length === 0 ? 'unknown' : allHealthy ? 'healthy' : hasDegraded ? 'degraded' : 'healthy'
+            return (
+              <>
+                <HealthDot status={derivedStatus} />
+                <span className="text-xs text-gray-500">
+                  {derivedStatus === 'healthy' ? 'All systems go' : derivedStatus === 'degraded' ? 'Partially degraded' : 'Checking...'}
+                </span>
+              </>
+            )
+          })()}
         </div>
       </div>
 
