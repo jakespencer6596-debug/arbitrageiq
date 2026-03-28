@@ -45,7 +45,12 @@ def map_market(market: dict) -> dict:
             category_scores[category] = category_scores.get(category, 0) + 1
 
     if not category_scores:
-        return {"category": "other", "data_sources": [], "is_mapped": False, "confidence": "low"}
+        # Even without keyword hits, use the pre-classified category from ingestion
+        fallback_cat = market.get("category", "other") if isinstance(market, dict) else getattr(market, "category", "other")
+        if fallback_cat and fallback_cat != "other":
+            category_scores[fallback_cat] = 1
+        else:
+            return {"category": "other", "data_sources": [], "is_mapped": False, "confidence": "low"}
 
     category = max(category_scores, key=category_scores.get)
     data_sources = []

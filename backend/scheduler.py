@@ -242,86 +242,103 @@ async def run_arb() -> None:
 
 async def run_discrepancy() -> None:
     """
-    Load mapped markets and their public data, run the discrepancy
-    detection engine, persist results, send alerts, and broadcast.
+    Compare prediction market prices against public data sources
+    (FRED economic, Odds API sports) to find mispriced markets.
     """
     db = SessionLocal()
     try:
-        # 1. Load mapped, active tracked markets
-        tracked = (
-            db.query(TrackedMarket)
+        try:
+            from engines.discrepancy_engine import detect_discrepancy
+        except ImportError:
+            logger.warning("run_discrepancy: engine not available — skipping")
+            return
+
+        # Build a lookup of public-data implied probabilities by source
+        # FRED/economic data is stored with source="fred"
+        public_sources = ["fred", "coingecko"]
+        public_data_map: dict[str, float] = {}
+        for src in public_sources:
+            prices = (
+                db.query(MarketPrice)
+                .filter(
+                    MarketPrice.source == src,
+                    MarketPrice.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
+            for p in prices:
+                if p.implied_probability and p.implied_probability > 0:
+                    public_data_map[f"{src}:{p.market_id}"] = p.implied_probability
+
+        # Load prediction market prices (Kalshi, Polymarket, PredictIt)
+        prediction_sources = ["kalshi", "polymarket", "predictit"]
+        pred_prices = (
+            db.query(MarketPrice)
             .filter(
-                TrackedMarket.is_mapped == True,  # noqa: E712
-                TrackedMarket.is_active == True,   # noqa: E712
+                MarketPrice.source.in_(prediction_sources),
+                MarketPrice.is_active == True,  # noqa: E712
             )
             .all()
         )
 
-        if not tracked:
-            logger.debug("run_discrepancy: no mapped markets — nothing to do")
+        if not pred_prices:
+            logger.debug("run_discrepancy: no prediction market prices")
             return
 
-        # 2. For each tracked market, load the latest price
-        market_data = []
-        for tm in tracked:
-            latest_price = (
-                db.query(MarketPrice)
-                .filter(
-                    MarketPrice.source == tm.source,
-                    MarketPrice.market_id == tm.market_id,
-                    MarketPrice.is_active == True,  # noqa: E712
-                )
-                .order_by(MarketPrice.timestamp.desc())
-                .first()
-            )
-            if latest_price:
-                market_data.append({
-                    "tracked_market": {
-                        "id": tm.id,
-                        "source": tm.source,
-                        "market_id": tm.market_id,
-                        "event_name": tm.event_name,
-                        "category": tm.category,
-                        "data_sources": tm.data_sources,
-                        "resolution_criteria": tm.resolution_criteria,
-                        "metadata": tm.metadata_,
-                    },
-                    "price": {
-                        "implied_probability": latest_price.implied_probability,
-                        "raw_odds": latest_price.raw_odds,
-                        "outcome": latest_price.outcome,
-                        "timestamp": latest_price.timestamp,
-                    },
-                })
-
-        if not market_data:
-            logger.debug("run_discrepancy: no price data for mapped markets")
-            return
-
-        # 3. Run detection engine
-        try:
-            from engines.discrepancy_engine import detect_discrepancy
-        except ImportError:
-            logger.warning(
-                "run_discrepancy: engines.discrepancy_engine not available — skipping"
-            )
-            return
+        # Compare prediction markets against each other (cross-platform)
+        # Group by event_name similarity for cross-source comparison
+        from collections import defaultdict
+        event_groups: dict[str, list] = defaultdict(list)
+        for p in pred_prices:
+            # Normalize event name for grouping
+            key = (p.event_name or "").lower().strip()[:80]
+            if key and p.implied_probability and p.implied_probability > 0:
+                event_groups[key].append(p)
 
         discrepancies = []
-        for md in market_data:
-            tm = md["tracked_market"]
-            price = md["price"]
-            market_dict = {
-                "market_id": tm["market_id"],
-                "source": tm["source"],
-                "event_name": tm["event_name"],
-                "implied_probability": price["implied_probability"],
-            }
-            # For now, skip markets without public data comparison
-            # (weather/economic modules populate this data)
-            if tm.get("data_sources"):
-                # Placeholder: public data would be fetched/cached by ingestion modules
-                pass
+        seen = set()
+
+        # Find cross-platform discrepancies (same event, different sources)
+        for key, prices in event_groups.items():
+            if len(prices) < 2:
+                continue
+            sources = set(p.source for p in prices)
+            if len(sources) < 2:
+                continue
+
+            # Compare each pair of sources
+            for i, p1 in enumerate(prices):
+                for p2 in prices[i + 1:]:
+                    if p1.source == p2.source:
+                        continue
+                    edge = abs(p1.implied_probability - p2.implied_probability)
+                    category = p1.category or "other"
+                    threshold = THRESHOLDS.get(category, 0.10)
+                    if edge >= threshold:
+                        disc_key = f"{p1.source}:{p1.market_id}:{p2.source}:{p2.market_id}"
+                        if disc_key in seen:
+                            continue
+                        seen.add(disc_key)
+                        direction = "BUY_YES" if p2.implied_probability > p1.implied_probability else "BUY_NO"
+                        result = detect_discrepancy(
+                            {
+                                "market_id": p1.market_id,
+                                "source": p1.source,
+                                "event_name": p1.event_name or key,
+                                "implied_probability": p1.implied_probability,
+                            },
+                            {
+                                "derived_probability": p2.implied_probability,
+                                "value": p2.implied_probability,
+                                "unit": "probability",
+                                "source": p2.source,
+                                "confidence": "medium",
+                                "notes": f"vs {p2.source} @ {p2.implied_probability:.2%}",
+                            },
+                            category,
+                        )
+                        if result:
+                            discrepancies.append(result.to_dict())
 
         if not discrepancies:
             logger.debug("run_discrepancy: no discrepancies detected")
