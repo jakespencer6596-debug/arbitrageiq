@@ -22,6 +22,7 @@ from db.models import SessionLocal, MarketPrice, TrackedMarket, SystemStatus
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
+_MAX_PAGES = 5  # Cap pagination to avoid OOM on free tier
 
 
 def _categorise(title: str) -> str:
@@ -185,10 +186,11 @@ class PolymarketClient:
         """
         results: list[dict] = []
         offset = 0
+        page_count = 0
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                while True:
+                while page_count < _MAX_PAGES:
                     resp = await client.get(
                         f"{self.base_url}/markets",
                         params={
@@ -266,9 +268,11 @@ class PolymarketClient:
                                     "timestamp": datetime.now(timezone.utc),
                                     "yes_price": yes_price,
                                     "no_price": no_price,
-                                    "raw": mkt,
+                                    "raw": None,
                                 }
                             )
+
+                    page_count += 1
 
                     # If fewer than _PAGE_LIMIT returned, we've reached the end
                     if len(markets) < _PAGE_LIMIT:

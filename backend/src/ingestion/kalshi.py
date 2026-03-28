@@ -242,7 +242,7 @@ class KalshiClient:
                                 "volume": volume,
                                 "open_interest": open_interest,
                                 "timestamp": datetime.now(timezone.utc),
-                                "raw": mkt,
+                                "raw": None,
                             }
                         )
 

@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -495,7 +495,8 @@ def start_scheduler() -> None:
         job_defaults={"misfire_grace_time": 60},
     )
 
-    # --- Ingestion jobs ---
+    # --- Ingestion jobs (staggered to avoid OOM on 512MB free tier) ---
+    _now = datetime.now(timezone.utc)
     _scheduler.add_job(
         fetch_odds,
         "interval",
@@ -504,7 +505,7 @@ def start_scheduler() -> None:
         name="Odds API ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=datetime.now(timezone.utc),  # run immediately on start
+        next_run_time=_now,
     )
     _scheduler.add_job(
         fetch_kalshi,
@@ -514,7 +515,7 @@ def start_scheduler() -> None:
         name="Kalshi ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=datetime.now(timezone.utc),
+        next_run_time=_now + timedelta(seconds=10),
     )
     _scheduler.add_job(
         fetch_polymarket,
@@ -524,7 +525,7 @@ def start_scheduler() -> None:
         name="Polymarket ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=datetime.now(timezone.utc),
+        next_run_time=_now + timedelta(seconds=20),
     )
     _scheduler.add_job(
         fetch_predictit,
@@ -534,7 +535,7 @@ def start_scheduler() -> None:
         name="PredictIt ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=datetime.now(timezone.utc),
+        next_run_time=_now + timedelta(seconds=30),
     )
     _scheduler.add_job(
         fetch_weather,
@@ -544,7 +545,7 @@ def start_scheduler() -> None:
         name="Weather data ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=datetime.now(timezone.utc),
+        next_run_time=_now + timedelta(seconds=40),
     )
     _scheduler.add_job(
         fetch_economic,
@@ -554,7 +555,7 @@ def start_scheduler() -> None:
         name="Economic data ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=datetime.now(timezone.utc),
+        next_run_time=_now + timedelta(seconds=50),
     )
 
     # --- Detection / analysis jobs ---
