@@ -490,7 +490,10 @@ def start_scheduler() -> None:
         logger.warning("start_scheduler: scheduler already running")
         return
 
-    _scheduler = AsyncIOScheduler(timezone="UTC")
+    _scheduler = AsyncIOScheduler(
+        timezone="UTC",
+        job_defaults={"misfire_grace_time": 60},
+    )
 
     # --- Ingestion jobs ---
     _scheduler.add_job(

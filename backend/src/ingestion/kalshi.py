@@ -11,6 +11,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+import asyncio
 import httpx
 import logging
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from db.models import SessionLocal, MarketPrice, TrackedMarket, SystemStatus
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
+_MAX_PAGES = 10  # Cap pagination to avoid rate limits
 
 
 def _categorise(title: str) -> str:
@@ -60,9 +62,11 @@ class KalshiClient:
         """
         Derive the YES implied probability from a single Kalshi market dict.
 
+        Handles both the legacy (cents) and current (dollar-string) API formats.
+
         Priority:
-            1. ``yes_ask`` field (in cents) divided by 100.
-            2. ``last_price`` field divided by 100 as fallback.
+            1. ``yes_ask_dollars`` or ``yes_ask`` field.
+            2. ``last_price_dollars`` or ``last_price`` field as fallback.
             3. 0.0 if neither is available.
 
         Args:
@@ -71,9 +75,25 @@ class KalshiClient:
         Returns:
             A float between 0.0 and 1.0 representing the YES probability.
         """
+        # New format: dollar strings like "0.4200"
+        yes_ask_dollars = market.get("yes_ask_dollars")
+        if yes_ask_dollars is not None:
+            try:
+                return float(yes_ask_dollars)
+            except (ValueError, TypeError):
+                pass
+
+        # Legacy format: cents
         yes_ask = market.get("yes_ask")
         if yes_ask is not None:
             return float(yes_ask) / 100.0
+
+        last_price_dollars = market.get("last_price_dollars")
+        if last_price_dollars is not None:
+            try:
+                return float(last_price_dollars)
+            except (ValueError, TypeError):
+                pass
 
         last_price = market.get("last_price")
         if last_price is not None:
@@ -178,10 +198,11 @@ class KalshiClient:
         """
         results: list[dict] = []
         cursor: str | None = None
+        page_count = 0
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                while True:
+                while page_count < _MAX_PAGES:
                     params: dict = {
                         "status": "open",
                         "limit": _PAGE_LIMIT,
@@ -195,6 +216,7 @@ class KalshiClient:
                     )
                     resp.raise_for_status()
                     data = resp.json()
+                    page_count += 1
 
                     markets = data.get("markets", [])
                     if not markets:
@@ -228,6 +250,9 @@ class KalshiClient:
                     cursor = data.get("cursor")
                     if not cursor:
                         break
+
+                    # Rate-limit between pages
+                    await asyncio.sleep(0.3)
 
             logger.info(f"Fetched {len(results)} open markets from Kalshi")
 
