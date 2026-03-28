@@ -93,8 +93,9 @@ _frontend_url = os.getenv("FRONTEND_URL", "")
 _allowed_origins = [
     "http://localhost:5173",
     "http://localhost:3000",
+    "https://arbitrageiq-frontend.onrender.com",
 ]
-if _frontend_url:
+if _frontend_url and _frontend_url not in _allowed_origins:
     _allowed_origins.append(_frontend_url)
 
 app.add_middleware(
