@@ -11,6 +11,7 @@ export default function Dashboard({
   health,
   stats,
   wsConnected,
+  apiConnected,
   liveFeed,
   showLiveFeed,
   onToggleLiveFeed,
@@ -19,6 +20,8 @@ export default function Dashboard({
   const marketCount = stats?.total_markets || markets?.length || 0
   const activeArbs = stats?.active_arbs ?? opportunities?.length ?? 0
   const discrepancyCount = stats?.active_discrepancies ?? discrepancies?.length ?? 0
+  const isConnected = apiConnected || wsConnected
+  const isLoading = stats === null
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -44,35 +47,34 @@ export default function Dashboard({
 
           {/* Right side */}
           <div className="flex items-center gap-4">
-            {/* WS indicator */}
+            {/* Connection indicator */}
             <div className="flex items-center gap-2 text-sm">
               <span
                 className={`w-2.5 h-2.5 rounded-full ${
-                  wsConnected
+                  isConnected
                     ? 'bg-green-500 animate-pulse-green'
                     : 'bg-red-500'
                 }`}
               />
-              <span className={`hidden sm:inline ${wsConnected ? 'text-green-400' : 'text-red-400'}`}>
-                {wsConnected ? 'Live' : 'Offline'}
+              <span className={`hidden sm:inline ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+                {isConnected ? 'Live' : 'Offline'}
               </span>
             </div>
 
-            {/* Settings icon */}
-            <button
-              className="p-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
-              title="Settings"
+            {/* Info tooltip */}
+            <div
+              className="p-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors cursor-default"
+              title="ArbitrageIQ scans prediction markets for arbitrage opportunities in real-time."
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={1.5}
-                  d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z"
+                  d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"
                 />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
-            </button>
+            </div>
           </div>
         </div>
       </nav>
@@ -81,10 +83,23 @@ export default function Dashboard({
       <div className="md:hidden flex items-center gap-2 px-4 py-2 overflow-x-auto bg-gray-900/50 border-b border-gray-800">
         <StatBadge label="Markets" value={marketCount} color="blue" />
         <StatBadge label="Arbs" value={activeArbs} color="green" />
-        <StatBadge label="Disc." value={discrepancies} color="yellow" />
+        <StatBadge label="Disc." value={discrepancyCount} color="yellow" />
       </div>
 
+      {/* ── Loading State ── */}
+      {isLoading && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <svg className="animate-spin h-8 w-8 text-green-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <p className="text-gray-400 text-sm font-medium">Connecting to server...</p>
+          <p className="text-gray-600 text-xs mt-1">Fetching market data and scanning for opportunities</p>
+        </div>
+      )}
+
       {/* ── Main Content ── */}
+      {!isLoading && (
       <main className="flex-1 max-w-[1920px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Two-column grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -107,6 +122,7 @@ export default function Dashboard({
           <MarketMap markets={markets} health={health} stats={stats} />
         </div>
       </main>
+      )}
 
       {/* ── Live Feed Toggle Button ── */}
       <button

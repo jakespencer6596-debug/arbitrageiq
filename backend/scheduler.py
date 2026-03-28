@@ -146,6 +146,12 @@ async def run_arb() -> None:
     """
     db = SessionLocal()
     try:
+        # 0. Expire all existing arbs before detecting new ones
+        db.query(ArbOpportunity).filter(
+            ArbOpportunity.is_active == True  # noqa: E712
+        ).update({"is_active": False})
+        db.commit()
+
         # 1. Load recent active prices
         prices = (
             db.query(MarketPrice)

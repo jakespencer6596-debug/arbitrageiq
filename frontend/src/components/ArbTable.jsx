@@ -1,11 +1,13 @@
 import React, { useState, useMemo } from 'react'
 
 function relativeTime(dateStr) {
-  if (!dateStr) return '--'
-  const now = Date.now()
+  if (!dateStr) return 'just now'
   const then = new Date(dateStr).getTime()
+  if (isNaN(then)) return 'just now'
+  const now = Date.now()
   const diff = Math.max(0, now - then)
   const seconds = Math.floor(diff / 1000)
+  if (seconds < 5) return 'just now'
   if (seconds < 60) return `${seconds}s ago`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m ago`
@@ -27,9 +29,12 @@ const SORT_KEYS = {
   detected_at: (a, b) => new Date(b.detected_at || 0) - new Date(a.detected_at || 0),
 }
 
+const ROWS_PER_PAGE = 25
+
 export default function ArbTable({ opportunities, onSelectOpportunity }) {
   const [sortKey, setSortKey] = useState('profit_pct')
   const [sortAsc, setSortAsc] = useState(false)
+  const [page, setPage] = useState(0)
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -49,6 +54,15 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
     })
     return list
   }, [opportunities, sortKey, sortAsc])
+
+  // Reset to first page when data or sort changes
+  React.useEffect(() => {
+    setPage(0)
+  }, [opportunities, sortKey, sortAsc])
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / ROWS_PER_PAGE))
+  const currentPage = Math.min(page, totalPages - 1)
+  const paginatedRows = sorted.slice(currentPage * ROWS_PER_PAGE, (currentPage + 1) * ROWS_PER_PAGE)
 
   const SortIcon = ({ column }) => {
     if (sortKey !== column) {
@@ -144,7 +158,7 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {sorted.map((opp) => {
+              {paginatedRows.map((opp) => {
                 const profitPctRaw = opp.profit_pct ?? 0
                 // profit_pct from API is 0-1 scale (0.023 = 2.3%), convert to display %
                 const profitPct = profitPctRaw < 1 ? profitPctRaw * 100 : profitPctRaw
@@ -221,6 +235,38 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination controls */}
+      {sorted.length > ROWS_PER_PAGE && (
+        <div className="px-6 py-3 border-t border-gray-800 flex items-center justify-between">
+          <button
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={currentPage === 0}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              currentPage === 0
+                ? 'text-gray-600 cursor-not-allowed'
+                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+            }`}
+          >
+            Previous
+          </button>
+          <span className="text-sm text-gray-500">
+            Page <span className="text-gray-300 font-medium">{currentPage + 1}</span> of{' '}
+            <span className="text-gray-300 font-medium">{totalPages}</span>
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            disabled={currentPage >= totalPages - 1}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              currentPage >= totalPages - 1
+                ? 'text-gray-600 cursor-not-allowed'
+                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+            }`}
+          >
+            Next
+          </button>
         </div>
       )}
     </div>

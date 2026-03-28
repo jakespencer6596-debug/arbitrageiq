@@ -14,10 +14,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 import logging
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from db.models import init_db
 from api.routes import router as api_router
@@ -101,11 +104,35 @@ if _frontend_url and _frontend_url not in _allowed_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
-    allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Rate limiting (simple in-memory, per IP, 60 req/min)
+# ---------------------------------------------------------------------------
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+_RATE_LIMIT_MAX = 60
+_RATE_LIMIT_WINDOW = 60  # seconds
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    # Prune old entries outside the window
+    _rate_limit_store[client_ip] = [
+        t for t in _rate_limit_store[client_ip] if t > now - _RATE_LIMIT_WINDOW
+    ]
+    if len(_rate_limit_store[client_ip]) >= _RATE_LIMIT_MAX:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Limit: 60 per minute."},
+        )
+    _rate_limit_store[client_ip].append(now)
+    return await call_next(request)
+
 
 # ---------------------------------------------------------------------------
 # Routes

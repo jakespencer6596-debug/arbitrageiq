@@ -13,6 +13,7 @@ export default function App() {
   const [liveFeed, setLiveFeed] = useState([])
   const [showLiveFeed, setShowLiveFeed] = useState(false)
   const [selectedOpp, setSelectedOpp] = useState(null)
+  const [apiConnected, setApiConnected] = useState(false)
 
   const wsRef = useRef(null)
 
@@ -86,15 +87,18 @@ export default function App() {
           api.getStats(),
           api.getHealth(),
         ])
+        let anySuccess = false
         if (opps.status === 'fulfilled') {
           const data = opps.value || {}
           setOpportunities(data.arb || [])
           setDiscrepancies(data.discrepancies || [])
+          anySuccess = true
         }
-        if (statsData.status === 'fulfilled') setStats(statsData.value)
-        if (healthData.status === 'fulfilled') setHealth(healthData.value)
+        if (statsData.status === 'fulfilled') { setStats(statsData.value); anySuccess = true }
+        if (healthData.status === 'fulfilled') { setHealth(healthData.value); anySuccess = true }
+        if (anySuccess) setApiConnected(true)
       } catch {
-        // silently fail, retry next poll
+        setApiConnected(false)
       }
     }
 
@@ -117,6 +121,7 @@ export default function App() {
         health={health}
         stats={stats}
         wsConnected={wsConnected}
+        apiConnected={apiConnected}
         liveFeed={liveFeed}
         showLiveFeed={showLiveFeed}
         onToggleLiveFeed={() => setShowLiveFeed((v) => !v)}

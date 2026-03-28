@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import func
 
 from db.models import (
@@ -93,7 +93,7 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
 # GET /opportunities
 # ---------------------------------------------------------------------------
 @router.get("/opportunities")
-async def get_opportunities():
+async def get_opportunities(limit: int = Query(50, ge=1, le=200)):
     """
     Return active arbitrage opportunities and discrepancies.
 
@@ -107,6 +107,7 @@ async def get_opportunities():
             db.query(ArbOpportunity)
             .filter(ArbOpportunity.is_active == True)  # noqa: E712
             .order_by(ArbOpportunity.profit_pct.desc())
+            .limit(limit)
             .all()
         )
 
@@ -114,6 +115,7 @@ async def get_opportunities():
             db.query(Discrepancy)
             .filter(Discrepancy.is_active == True)  # noqa: E712
             .order_by(Discrepancy.edge_pct.desc())
+            .limit(limit)
             .all()
         )
 
@@ -129,13 +131,14 @@ async def get_opportunities():
 # GET /markets
 # ---------------------------------------------------------------------------
 @router.get("/markets")
-async def get_markets():
+async def get_markets(limit: int = Query(50, ge=1, le=200)):
     """Return every TrackedMarket with its current status."""
     db = SessionLocal()
     try:
         markets = (
             db.query(TrackedMarket)
             .order_by(TrackedMarket.first_seen.desc())
+            .limit(limit)
             .all()
         )
         return {"markets": [_row_to_dict(m) for m in markets]}

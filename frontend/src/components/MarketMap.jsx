@@ -5,13 +5,13 @@ const CATEGORY_CONFIG = {
   economic: { label: 'Economic', color: 'bg-yellow-500', barBg: 'bg-yellow-500/20' },
   political: { label: 'Political', color: 'bg-purple-500', barBg: 'bg-purple-500/20' },
   sports: { label: 'Sports', color: 'bg-green-500', barBg: 'bg-green-500/20' },
-  crypto: { label: 'Crypto', color: 'bg-orange-500', barBg: 'bg-orange-500/20' },
   entertainment: { label: 'Entertainment', color: 'bg-pink-500', barBg: 'bg-pink-500/20' },
+  other: { label: 'Other', color: 'bg-gray-500', barBg: 'bg-gray-500/20' },
 }
 
 export default function MarketMap({ markets, health, stats }) {
   const categoryBreakdown = stats?.category_breakdown || {}
-  const platforms = stats?.platforms || health?.platforms || []
+  const platforms = stats?.platforms || health?.components || health?.platforms || []
   const totalMarkets = stats?.total_markets || markets?.length || 0
   const platformCount = platforms.length || stats?.platform_count || 0
   const unmapped = stats?.unmapped_markets || 0
@@ -134,7 +134,7 @@ export default function MarketMap({ markets, health, stats }) {
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {['Polymarket', 'Kalshi', 'PredictIt', 'Metaculus', 'Manifold', 'Betfair'].map((name) => (
+              {['Odds API', 'Kalshi', 'Polymarket', 'PredictIt', 'Weather', 'FRED'].map((name) => (
                 <div
                   key={name}
                   className="flex items-center gap-2.5 bg-gray-800/30 rounded-lg border border-gray-800 px-3 py-2.5"
