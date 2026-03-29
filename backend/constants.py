@@ -9,9 +9,9 @@ from dotenv import load_dotenv
 load_dotenv('/etc/secrets/.env')
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-# API Keys
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
-FRED_API_KEY = os.getenv("FRED_API_KEY")
+# API Keys (fallbacks for Render where env vars may not be configured)
+ODDS_API_KEY = os.getenv("ODDS_API_KEY", "bdc9181d902b5410bd4cff7066945065")
+FRED_API_KEY = os.getenv("FRED_API_KEY", "314ca443ac2c2b529da3bdd3a2c7c91e")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "PENDING")
 
