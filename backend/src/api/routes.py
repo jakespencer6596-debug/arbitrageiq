@@ -92,6 +92,52 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # GET /opportunities
 # ---------------------------------------------------------------------------
+@router.get("/debug/prices")
+async def debug_prices():
+    """Debug: show sample cross-source price data for arb analysis."""
+    db = SessionLocal()
+    try:
+        from sqlalchemy import func, distinct
+        # Count prices by source
+        source_counts = (
+            db.query(MarketPrice.source, func.count(MarketPrice.id))
+            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .group_by(MarketPrice.source)
+            .all()
+        )
+        # Find events that exist on multiple sources (arb candidates)
+        multi = (
+            db.query(MarketPrice.event_name, func.count(distinct(MarketPrice.source)))
+            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .group_by(MarketPrice.event_name)
+            .having(func.count(distinct(MarketPrice.source)) >= 2)
+            .limit(10)
+            .all()
+        )
+        # For the first multi-source event, show all prices
+        sample = []
+        if multi:
+            event_name = multi[0][0]
+            rows = (
+                db.query(MarketPrice)
+                .filter(MarketPrice.event_name == event_name, MarketPrice.is_active == True)  # noqa: E712
+                .all()
+            )
+            for r in rows[:20]:
+                sample.append({
+                    "source": r.source, "event": r.event_name[:60], "outcome": r.outcome,
+                    "implied_prob": r.implied_probability, "raw_odds": r.raw_odds,
+                })
+        return {
+            "source_counts": {s: c for s, c in source_counts},
+            "multi_source_events": [(e, c) for e, c in multi],
+            "sample_prices": sample,
+            "total_active_prices": sum(c for _, c in source_counts),
+        }
+    finally:
+        db.close()
+
+
 @router.get("/opportunities")
 async def get_opportunities(limit: int = Query(50, ge=1, le=200)):
     """
