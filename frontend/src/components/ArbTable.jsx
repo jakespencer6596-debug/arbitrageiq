@@ -1,5 +1,51 @@
 import React, { useState, useMemo } from 'react'
 
+/**
+ * Generate a URL for a given betting platform / bookmaker.
+ * Prediction markets get a search-query link; sportsbooks get their homepage.
+ */
+function bookUrl(book, eventName) {
+  const key = (book || '').toLowerCase().trim()
+  const q = encodeURIComponent(eventName || '')
+
+  // Prediction markets – deep-link to a search for the event
+  if (key === 'polymarket') return `https://polymarket.com/search?query=${q}`
+  if (key === 'kalshi') return `https://kalshi.com/browse?query=${q}`
+  if (key === 'predictit') return 'https://www.predictit.org/markets'
+  if (key === 'manifold') return `https://manifold.markets/search?q=${q}`
+
+  // Common odds-API sportsbooks
+  const sportsbooks = {
+    draftkings: 'https://www.draftkings.com',
+    fanduel: 'https://www.fanduel.com',
+    betmgm: 'https://www.betmgm.com',
+    caesars: 'https://www.caesars.com/sportsbook-and-casino',
+    pointsbet: 'https://www.pointsbet.com',
+    betrivers: 'https://www.betrivers.com',
+    unibet: 'https://www.unibet.com',
+    bovada: 'https://www.bovada.lv',
+    betonline: 'https://www.betonline.ag',
+    bet365: 'https://www.bet365.com',
+    williamhill: 'https://www.williamhill.com',
+    pinnacle: 'https://www.pinnacle.com',
+    betfair: 'https://www.betfair.com',
+    foxbet: 'https://www.foxbet.com',
+    barstool: 'https://www.barstoolsportsbook.com',
+    wynnbet: 'https://www.wynnbet.com',
+    superbook: 'https://www.superbook.com',
+    betus: 'https://www.betus.com.pa',
+    mybookie: 'https://www.mybookie.ag',
+  }
+
+  // Try exact match first, then substring match (e.g. "draftkings_h2h" -> draftkings)
+  if (sportsbooks[key]) return sportsbooks[key]
+  for (const [name, url] of Object.entries(sportsbooks)) {
+    if (key.includes(name)) return url
+  }
+
+  return null // unknown source – won't be wrapped in a link
+}
+
 function relativeTime(dateStr) {
   if (!dateStr) return 'just now'
   const then = new Date(dateStr).getTime()
@@ -191,9 +237,16 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
 
                     {/* Event */}
                     <td className="px-6 py-3.5">
-                      <span className="text-gray-200 font-medium group-hover:text-white transition-colors">
+                      <a
+                        href={`https://www.google.com/search?q=${encodeURIComponent((opp.event_name || 'prediction market') + ' prediction market')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-gray-200 font-medium transition-colors hover:text-blue-400 hover:underline"
+                      >
                         {opp.event_name || 'Unknown Event'}
-                      </span>
+                        <span className="ml-1 text-gray-500 text-xs group-hover:text-blue-400 transition-colors">&#8599;</span>
+                      </a>
                     </td>
 
                     {/* Category */}
@@ -205,14 +258,28 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {books.length > 0
-                          ? books.map((b, i) => (
-                              <span
-                                key={i}
-                                className="text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-md border border-gray-700"
-                              >
-                                {b}
-                              </span>
-                            ))
+                          ? books.map((b, i) => {
+                              const url = bookUrl(b, opp.event_name)
+                              return url ? (
+                                <a
+                                  key={i}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-0.5 text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-md border border-gray-700 transition-colors hover:text-blue-400 hover:border-blue-500/40 hover:underline"
+                                >
+                                  {b}<span className="text-[10px] leading-none">&#8599;</span>
+                                </a>
+                              ) : (
+                                <span
+                                  key={i}
+                                  className="text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-md border border-gray-700"
+                                >
+                                  {b}
+                                </span>
+                              )
+                            })
                           : <span className="text-gray-600">--</span>}
                       </div>
                     </td>

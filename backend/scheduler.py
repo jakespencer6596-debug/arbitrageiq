@@ -28,6 +28,7 @@ from constants import (
     KALSHI_POLL_SECONDS,
     POLYMARKET_POLL_SECONDS,
     PREDICTIT_POLL_SECONDS,
+    MANIFOLD_POLL_SECONDS,
     WEATHER_POLL_SECONDS,
     ECONOMIC_POLL_SECONDS,
     KEEPALIVE_SECONDS,
@@ -105,6 +106,20 @@ async def fetch_predictit() -> None:
         logger.warning("fetch_predictit: ingestion.predictit not available — skipping")
     except Exception as exc:
         logger.error(f"fetch_predictit failed: {exc}", exc_info=True)
+
+
+async def fetch_manifold() -> None:
+    """Fetch latest Manifold Markets prediction-market data."""
+    try:
+        from ingestion.manifold import ManifoldClient
+
+        client = ManifoldClient()
+        results = await client.fetch()
+        logger.info(f"fetch_manifold: ingested {len(results)} price snapshots")
+    except ImportError:
+        logger.warning("fetch_manifold: ingestion.manifold not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_manifold failed: {exc}", exc_info=True)
 
 
 async def fetch_weather() -> None:
@@ -559,6 +574,16 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         next_run_time=_now + timedelta(seconds=30),
+    )
+    _scheduler.add_job(
+        fetch_manifold,
+        "interval",
+        seconds=MANIFOLD_POLL_SECONDS,
+        id="fetch_manifold",
+        name="Manifold Markets ingestion",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=60),
     )
     _scheduler.add_job(
         fetch_weather,
