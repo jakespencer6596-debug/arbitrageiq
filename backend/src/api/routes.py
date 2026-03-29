@@ -128,10 +128,25 @@ async def debug_prices():
                     "source": r.source, "event": r.event_name[:60], "outcome": r.outcome,
                     "implied_prob": r.implied_probability, "raw_odds": r.raw_odds,
                 })
+        # Also check ALL prices (not just active)
+        all_source_counts = (
+            db.query(MarketPrice.source, func.count(MarketPrice.id))
+            .group_by(MarketPrice.source)
+            .all()
+        )
+        # Sample some odds_api-adjacent sources
+        bookmaker_sample = (
+            db.query(MarketPrice.source, MarketPrice.event_name, MarketPrice.outcome, MarketPrice.raw_odds)
+            .filter(MarketPrice.source.notin_(["fred", "kalshi", "polymarket", "predictit", "coingecko"]))
+            .limit(10)
+            .all()
+        )
         return {
-            "source_counts": {s: c for s, c in source_counts},
+            "active_source_counts": {s: c for s, c in source_counts},
+            "all_source_counts": {s: c for s, c in all_source_counts},
             "multi_source_events": [(e, c) for e, c in multi],
             "sample_prices": sample,
+            "bookmaker_sample": [{"source": s, "event": e[:50], "outcome": o, "odds": od} for s, e, o, od in bookmaker_sample],
             "total_active_prices": sum(c for _, c in source_counts),
         }
     finally:
