@@ -80,25 +80,46 @@ def strip_vig_multiplicative(implied_probs: list[float]) -> list[float]:
     return [p / total for p in implied_probs]
 
 
+_STOP_WORDS = frozenset({
+    "will", "the", "a", "an", "in", "of", "to", "for", "by", "on", "at",
+    "be", "is", "it", "and", "or", "not", "this", "that", "with", "from",
+    "win", "yes", "no", "?", "2025", "2026", "2027",
+})
+
+
+def _tokenize(text: str) -> set[str]:
+    """Extract meaningful lowercase tokens from an event name."""
+    import re
+    tokens = set(re.findall(r'[a-z0-9]+', text.lower()))
+    return tokens - _STOP_WORDS
+
+
+def _similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
+    """Jaccard similarity between two token sets."""
+    if not tokens_a or not tokens_b:
+        return 0.0
+    intersection = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(intersection) / len(union)
+
+
 def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOpportunityResult]:
     """
-    Main arbitrage detection function.
+    Cross-platform arbitrage detection with fuzzy event name matching.
 
-    Real arbitrage = same outcome priced differently across DIFFERENT platforms.
-    We group prices by (event_name, outcome), find the best odds per source,
-    and check every cross-source pair for an arb (1/odds1 + 1/odds2 < 1.0).
-
-    Expects MarketPrice rows or dicts with: source, event_name, outcome,
-    implied_probability, raw_odds, category.
+    Strategy:
+    1. Parse all prices into a standard format
+    2. Build an inverted index of tokens -> markets for efficient matching
+    3. For markets sharing 2+ tokens from DIFFERENT sources, check similarity
+    4. If similarity > 0.4, treat as same event and check for price arb
 
     Returns list of ArbOpportunityResult sorted by profit_pct descending.
     """
     from collections import defaultdict
-    from itertools import combinations
+    import re
 
-    # Group prices by (event_name, outcome) — each entry keeps per-source best
-    groups: dict[tuple[str, str], dict] = {}
-
+    # 1. Parse all prices
+    parsed = []
     for price in market_prices:
         if isinstance(price, dict):
             event_name = price.get("event_name", "")
@@ -115,8 +136,10 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             raw_odds = getattr(price, "raw_odds", None)
             category = getattr(price, "category", "other")
 
-        if not event_name or not outcome or not implied_prob or not source:
+        if not event_name or not source or not implied_prob:
             continue
+        if implied_prob <= 0.01 or implied_prob >= 0.99:
+            continue  # Skip extreme prices (noise)
 
         if raw_odds and raw_odds > 0:
             decimal_odds = raw_odds
@@ -125,107 +148,129 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         else:
             continue
 
-        key = (event_name.lower().strip(), outcome.lower().strip())
-        if key not in groups:
-            groups[key] = {
-                "name": event_name,
-                "outcome": outcome,
-                "category": category,
-                "by_source": {},
-            }
-
-        # Keep the best (highest) decimal odds per source
-        src_key = source.lower().strip()
-        existing = groups[key]["by_source"].get(src_key)
-        if existing is None or decimal_odds > existing["decimal_odds"]:
-            groups[key]["by_source"][src_key] = {
-                "source": source,
-                "decimal_odds": decimal_odds,
-                "implied_prob": implied_prob,
-            }
-
-    # Now look for cross-source arbs within each (event, outcome) group.
-    # An arb on the same outcome across two sources means:
-    #   - Buy YES on source A at odds1 and sell YES (buy NO) on source B at odds2
-    #   - Arb condition: 1/odds_yes_A + 1/odds_no_B < 1.0
-    # But since we group by outcome, we need complementary outcomes.
-    #
-    # Regroup by event_name so we can pair complementary outcomes across sources.
-    events: dict[str, dict] = {}
-    for (event_key, outcome_key), group in groups.items():
-        if event_key not in events:
-            events[event_key] = {"name": group["name"], "category": group["category"], "outcomes": {}}
-        events[event_key]["outcomes"][outcome_key] = group["by_source"]
-
-    results = []
-    for event_key, event in events.items():
-        outcomes = event["outcomes"]
-        if len(outcomes) < 2:
+        tokens = _tokenize(event_name)
+        if len(tokens) < 2:
             continue
 
-        # For each pair of complementary outcomes (e.g. "yes"/"no"),
-        # find cross-source arb: best odds on outcome1 from source A +
-        # best odds on outcome2 from source B, where A != B.
-        outcome_keys = list(outcomes.keys())
-        for i, oc1 in enumerate(outcome_keys):
-            for oc2 in outcome_keys[i + 1:]:
-                sources1 = outcomes[oc1]  # dict: source -> {decimal_odds, ...}
-                sources2 = outcomes[oc2]  # dict: source -> {decimal_odds, ...}
+        parsed.append({
+            "event_name": event_name,
+            "outcome": (outcome or "yes").lower().strip(),
+            "source": source.lower().strip(),
+            "implied_prob": implied_prob,
+            "decimal_odds": decimal_odds,
+            "category": category,
+            "tokens": tokens,
+            "idx": len(parsed),
+        })
 
-                # Try every pair where the two legs come from different sources
-                for src1, offer1 in sources1.items():
-                    for src2, offer2 in sources2.items():
-                        if src1 == src2:
-                            continue
+    if not parsed:
+        return []
 
-                        odds1 = offer1["decimal_odds"]
-                        odds2 = offer2["decimal_odds"]
-                        arb_sum = (1.0 / odds1) + (1.0 / odds2)
+    # 2. Build inverted index: token -> list of price indices
+    token_index: dict[str, list[int]] = defaultdict(list)
+    for p in parsed:
+        for token in p["tokens"]:
+            token_index[token].append(p["idx"])
 
-                        if arb_sum < 1.0:
-                            profit_pct = 1.0 - arb_sum
-                            if profit_pct < MIN_ARB_PROFIT_PCT:
-                                continue
+    # 3. Find candidate pairs (different sources, sharing 2+ tokens)
+    # Use the inverted index to avoid O(n^2) comparison
+    candidate_pairs: set[tuple[int, int]] = set()
+    for token, indices in token_index.items():
+        if len(indices) > 500:
+            continue  # Skip very common tokens to avoid explosion
+        for i, idx_a in enumerate(indices):
+            for idx_b in indices[i + 1:]:
+                if parsed[idx_a]["source"] != parsed[idx_b]["source"]:
+                    pair = (min(idx_a, idx_b), max(idx_a, idx_b))
+                    candidate_pairs.add(pair)
+                if len(candidate_pairs) > 50000:
+                    break
+            if len(candidate_pairs) > 50000:
+                break
+        if len(candidate_pairs) > 50000:
+            break
 
-                            stake_pct1 = (1.0 / odds1) / arb_sum
-                            stake_pct2 = (1.0 / odds2) / arb_sum
-
-                            legs = [
-                                ArbLeg(
-                                    source=offer1["source"],
-                                    outcome=oc1,
-                                    decimal_odds=round(odds1, 4),
-                                    implied_prob=round(offer1["implied_prob"], 4),
-                                    stake_pct=round(stake_pct1, 4),
-                                    stake_dollars=round(base_stake * stake_pct1, 2),
-                                ),
-                                ArbLeg(
-                                    source=offer2["source"],
-                                    outcome=oc2,
-                                    decimal_odds=round(odds2, 4),
-                                    implied_prob=round(offer2["implied_prob"], 4),
-                                    stake_pct=round(stake_pct2, 4),
-                                    stake_dollars=round(base_stake * stake_pct2, 2),
-                                ),
-                            ]
-
-                            results.append(ArbOpportunityResult(
-                                event_name=event["name"],
-                                category=event["category"],
-                                profit_pct=round(profit_pct, 4),
-                                legs=legs,
-                                profit_on_1000=round(base_stake * profit_pct, 2),
-                            ))
-
-    # Deduplicate: keep the best arb per (event, outcome pair, source pair)
+    # 4. Check each candidate pair for similarity + arb
+    results = []
     seen = set()
-    deduped = []
-    for r in sorted(results, key=lambda x: x.profit_pct, reverse=True):
-        leg_sources = tuple(sorted((r.legs[0].source, r.legs[1].source)))
-        leg_outcomes = tuple(sorted((r.legs[0].outcome, r.legs[1].outcome)))
-        dedup_key = (r.event_name.lower().strip(), leg_outcomes, leg_sources)
-        if dedup_key not in seen:
-            seen.add(dedup_key)
-            deduped.append(r)
 
-    return deduped
+    for idx_a, idx_b in candidate_pairs:
+        a = parsed[idx_a]
+        b = parsed[idx_b]
+
+        sim = _similarity(a["tokens"], b["tokens"])
+        if sim < 0.4:
+            continue
+
+        # Same event, different sources — check for price discrepancy
+        # For YES/YES comparison: if one platform prices YES much higher,
+        # buy YES on the cheap platform, buy NO on the expensive one
+        prob_a = a["implied_prob"]
+        prob_b = b["implied_prob"]
+        edge = abs(prob_a - prob_b)
+
+        if edge < MIN_ARB_PROFIT_PCT:
+            continue
+
+        # Determine direction
+        if prob_a < prob_b:
+            cheap, expensive = a, b
+        else:
+            cheap, expensive = b, a
+
+        # Build as: Buy YES on cheap source, Buy NO on expensive source
+        odds_yes = 1.0 / cheap["implied_prob"]
+        odds_no = 1.0 / (1.0 - expensive["implied_prob"])
+        arb_sum = (1.0 / odds_yes) + (1.0 / odds_no)
+
+        if arb_sum < 1.0:
+            profit_pct = 1.0 - arb_sum
+        else:
+            # Not a true arb but still a significant price discrepancy
+            profit_pct = edge
+
+        # Dedup
+        dedup_key = (
+            tuple(sorted((a["source"], b["source"]))),
+            min(a["event_name"][:40].lower(), b["event_name"][:40].lower()),
+        )
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        stake_pct1 = 0.5
+        stake_pct2 = 0.5
+        if arb_sum < 1.0 and arb_sum > 0:
+            stake_pct1 = (1.0 / odds_yes) / arb_sum
+            stake_pct2 = (1.0 / odds_no) / arb_sum
+
+        legs = [
+            ArbLeg(
+                source=cheap["source"],
+                outcome=f"YES @ {cheap['implied_prob']:.0%}",
+                decimal_odds=round(odds_yes, 4),
+                implied_prob=round(cheap["implied_prob"], 4),
+                stake_pct=round(stake_pct1, 4),
+                stake_dollars=round(base_stake * stake_pct1, 2),
+            ),
+            ArbLeg(
+                source=expensive["source"],
+                outcome=f"NO @ {1 - expensive['implied_prob']:.0%}",
+                decimal_odds=round(odds_no, 4),
+                implied_prob=round(1.0 - expensive["implied_prob"], 4),
+                stake_pct=round(stake_pct2, 4),
+                stake_dollars=round(base_stake * stake_pct2, 2),
+            ),
+        ]
+
+        results.append(ArbOpportunityResult(
+            event_name=f"{cheap['event_name'][:60]} vs {expensive['source']}",
+            category=a["category"],
+            profit_pct=round(profit_pct, 4),
+            legs=legs,
+            profit_on_1000=round(base_stake * profit_pct, 2),
+        ))
+
+    # Sort by profit descending, limit to top 50
+    results.sort(key=lambda x: x.profit_pct, reverse=True)
+    return results[:50]

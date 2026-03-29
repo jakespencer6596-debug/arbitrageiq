@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Track which sport batch we're on for rotation
 _current_batch_index = 0
-_BATCH_SIZE = 5
+_BATCH_SIZE = 3  # Reduced to conserve free-tier credits (500/month)
 
 
 def _classify_sport(sport_key: str) -> str:
