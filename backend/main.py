@@ -56,6 +56,14 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialised")
 
+    # 1b. Cleanup stale data from previous runs to free memory on startup
+    try:
+        from db.models import cleanup_old_data
+        result = cleanup_old_data(max_age_hours=6, max_per_source=500)
+        logger.info(f"Startup cleanup: {result}")
+    except Exception as exc:
+        logger.warning(f"Startup cleanup failed (non-fatal): {exc}")
+
     # 2. Telegram bot (optional — may not be configured yet)
     try:
         from alerts.telegram import init_bot

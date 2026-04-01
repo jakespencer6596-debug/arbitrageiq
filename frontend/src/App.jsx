@@ -78,8 +78,19 @@ export default function App() {
     }
   }, [handleWsMessage])
 
-  // Polling
+  // Fast snapshot on first load, then full polling
   useEffect(() => {
+    // 1. Instant snapshot — loads in <200ms, shows something immediately
+    api.getSnapshot().then((snap) => {
+      if (snap) {
+        setOpportunities(snap.arb || [])
+        setDiscrepancies(snap.discrepancies || [])
+        if (snap.stats) setStats(snap.stats)
+        setApiConnected(true)
+      }
+    }).catch(() => {})
+
+    // 2. Full data fetch (slower, richer)
     async function fetchAll() {
       try {
         const [opps, statsData, healthData] = await Promise.allSettled([
@@ -102,9 +113,10 @@ export default function App() {
       }
     }
 
-    fetchAll()
-    const interval = setInterval(fetchAll, 15000)
-    return () => clearInterval(interval)
+    // Delay the full fetch slightly to let snapshot render first
+    const initialTimer = setTimeout(fetchAll, 2000)
+    const interval = setInterval(fetchAll, 20000)
+    return () => { clearTimeout(initialTimer); clearInterval(interval) }
   }, [])
 
   // Fetch markets once

@@ -28,7 +28,7 @@ from constants import (
     OPEN_METEO_HISTORICAL_URL,
     NWS_API_URL,
 )
-from db.models import SessionLocal, TrackedMarket, SystemStatus
+from db.models import SessionLocal, TrackedMarket, SystemStatus, MarketPrice
 
 logger = logging.getLogger(__name__)
 
@@ -489,6 +489,36 @@ class WeatherClient:
         else:
             return _norm_cdf(z)
 
+    async def _fetch_wttr_forecast(
+        self,
+        client: httpx.AsyncClient,
+        city_name: str,
+    ) -> dict[str, Any] | None:
+        """
+        Fetch a lightweight forecast from wttr.in (free, no API key).
+        Used as a cross-reference for Open-Meteo data to strengthen
+        discrepancy confidence.
+        """
+        try:
+            resp = await client.get(
+                f"https://wttr.in/{city_name}?format=j1",
+                timeout=10,
+                headers={"User-Agent": "ArbitrageIQ/1.0"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            weather = data.get("weather", [])
+            if weather:
+                day = weather[0]
+                return {
+                    "temp_max_f": float(day.get("maxtempF", 0)),
+                    "temp_min_f": float(day.get("mintempF", 0)),
+                    "source": "wttr.in",
+                }
+        except Exception as exc:
+            logger.debug(f"wttr.in forecast failed for {city_name}: {exc}")
+        return None
+
     async def fetch(self) -> list[dict[str, Any]]:
         """
         Process all weather-related TrackedMarkets and return enriched results.
@@ -601,6 +631,16 @@ class WeatherClient:
                         }
                     )
 
+                # Step 2b: Cross-reference with wttr.in (free, no key)
+                city_name = None
+                for city in _CITY_COORDS:
+                    if city in title.lower():
+                        city_name = city.replace(" ", "+")
+                        break
+                wttr_data = None
+                if city_name:
+                    wttr_data = await self._fetch_wttr_forecast(client, city_name)
+
                 # Step 3: Fetch historical data
                 hist_data = await self._fetch_historical(client, lat, lon)
                 hist_daily = hist_data.get("daily", {})
@@ -706,6 +746,7 @@ class WeatherClient:
                         if threshold_info
                         else None
                     ),
+                    "cross_reference": wttr_data,
                     "nws_alerts": nws_alerts,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
@@ -717,7 +758,46 @@ class WeatherClient:
                     f"alerts={len(nws_alerts)}"
                 )
 
+        # Persist weather-derived probabilities as MarketPrice rows
+        # so the discrepancy engine can compare them against prediction markets
         if results:
+            try:
+                db = SessionLocal()
+                try:
+                    # Deactivate old weather data
+                    db.query(MarketPrice).filter(
+                        MarketPrice.source == "weather",
+                        MarketPrice.is_active == True,  # noqa: E712
+                    ).update({"is_active": False})
+
+                    for r in results:
+                        if r.get("derived_probability") is not None:
+                            db.add(MarketPrice(
+                                source="weather",
+                                market_id=r["market_id"],
+                                event_name=r["market_title"],
+                                market_title=r["market_title"],
+                                outcome="yes",
+                                implied_probability=r["derived_probability"],
+                                category="weather",
+                                yes_price=r["derived_probability"],
+                                no_price=1.0 - r["derived_probability"],
+                                metadata_={
+                                    "forecast": r.get("forecast", [])[:2],
+                                    "historical_stats": r.get("historical_stats"),
+                                    "threshold_info": r.get("threshold_info"),
+                                    "nws_alerts_count": len(r.get("nws_alerts", [])),
+                                },
+                                is_active=True,
+                            ))
+
+                    db.commit()
+                    logger.info(f"Saved {len(results)} weather data points to DB")
+                finally:
+                    db.close()
+            except Exception as exc:
+                logger.error(f"Failed to save weather data to DB: {exc}")
+
             self._update_system_status()
         else:
             logger.info("No weather results produced (no valid locations)")

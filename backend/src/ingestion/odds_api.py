@@ -290,11 +290,19 @@ class OddsAPIClient:
                     continue
 
         # ------------------------------------------------------------------
-        # 4. Persist to database
+        # 4. Persist to database (deactivate old, insert new)
         # ------------------------------------------------------------------
         try:
             db = SessionLocal()
             try:
+                # Deactivate all previous odds_api-sourced bookmaker prices
+                bookmaker_sources = set(r["source"] for r in results)
+                for src in bookmaker_sources:
+                    db.query(MarketPrice).filter(
+                        MarketPrice.source == src,
+                        MarketPrice.is_active == True,  # noqa: E712
+                    ).update({"is_active": False})
+
                 for r in results:
                     db.add(
                         MarketPrice(

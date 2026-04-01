@@ -126,6 +126,13 @@ function DiscrepancyCard({ data }) {
         </div>
       </div>
 
+      {/* Notes — explains WHY this is a discrepancy */}
+      {data.notes && (
+        <p className="text-xs text-gray-400 mb-3 leading-relaxed bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700/30">
+          {data.notes}
+        </p>
+      )}
+
       {/* Bottom row */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

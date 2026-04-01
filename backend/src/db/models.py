@@ -8,7 +8,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Float, DateTime, Boolean, JSON,
-    Integer, Text, create_engine, Index
+    Integer, Text, create_engine, Index, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -20,6 +20,8 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
     echo=False,
     pool_pre_ping=True,
+    pool_size=2,
+    max_overflow=1,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -157,8 +159,14 @@ class SystemStatus(Base):
 
 
 def init_db():
-    """Create all tables. Call on startup."""
+    """Create all tables and enable WAL mode for lower memory + better concurrency."""
     Base.metadata.create_all(bind=engine)
+    # WAL mode uses less memory and allows concurrent reads during writes
+    with engine.connect() as conn:
+        conn.execute(text("PRAGMA journal_mode=WAL"))
+        conn.execute(text("PRAGMA synchronous=NORMAL"))
+        conn.execute(text("PRAGMA cache_size=-8000"))  # 8 MB cache max
+        conn.commit()
 
 
 def get_session():
@@ -168,6 +176,51 @@ def get_session():
         yield session
     finally:
         session.close()
+
+
+def cleanup_old_data(max_age_hours: int = 6, max_per_source: int = 500):
+    """
+    Purge old MarketPrice rows and expired arbs/discrepancies to keep
+    memory and DB size under control on the 512 MB Render Starter plan.
+    """
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=max_age_hours)
+
+        # Delete old market prices
+        old_prices = db.query(MarketPrice).filter(MarketPrice.timestamp < cutoff).delete()
+
+        # Deactivate stale prices (older than 1 hour)
+        stale_cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=1)
+        db.query(MarketPrice).filter(
+            MarketPrice.timestamp < stale_cutoff,
+            MarketPrice.is_active == True,  # noqa: E712
+        ).update({"is_active": False})
+
+        # Delete expired arbs older than 2 hours
+        arb_cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=2)
+        old_arbs = db.query(ArbOpportunity).filter(
+            ArbOpportunity.detected_at < arb_cutoff
+        ).delete()
+
+        # Delete expired discrepancies older than 2 hours
+        old_discs = db.query(Discrepancy).filter(
+            Discrepancy.detected_at < arb_cutoff
+        ).delete()
+
+        db.commit()
+
+        # Vacuum to reclaim space
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+            conn.commit()
+
+        return {"prices": old_prices, "arbs": old_arbs, "discrepancies": old_discs}
+    except Exception:
+        db.rollback()
+        return {}
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

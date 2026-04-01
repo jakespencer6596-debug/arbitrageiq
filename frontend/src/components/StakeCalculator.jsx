@@ -26,7 +26,9 @@ export default function StakeCalculator({ opportunity, onClose }) {
 
   const opp = opportunity
   const legs = opp?.legs || []
-  const profitPct = opp?.profit_pct ?? 0
+  const profitPctRaw = opp?.profit_pct ?? 0
+  // profit_pct from API is 0-1 scale (0.023 = 2.3%), convert to display %
+  const profitPct = profitPctRaw < 1 ? profitPctRaw * 100 : profitPctRaw
 
   // Calculate stakes for guaranteed-profit arbitrage
   // For each leg: stake_i = bankroll * (1/odds_i) / sum(1/odds_j)
@@ -165,7 +167,19 @@ export default function StakeCalculator({ opportunity, onClose }) {
                       {calc.outcome || calc.selection || `Leg ${i + 1}`}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      {calc.source || calc.book || calc.platform || 'Unknown book'}
+                      {calc.market_url ? (
+                        <a
+                          href={calc.market_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                        >
+                          {calc.source || calc.book || calc.platform || 'Unknown book'}
+                          <span className="ml-0.5 text-[10px]">&#8599;</span>
+                        </a>
+                      ) : (
+                        calc.source || calc.book || calc.platform || 'Unknown book'
+                      )}
                       <span className="mx-1.5 text-gray-700">|</span>
                       Odds: <span className="text-gray-400 font-medium">{formatOdds(calc, calc)}</span>
                     </p>

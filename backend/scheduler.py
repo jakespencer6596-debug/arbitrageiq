@@ -34,6 +34,8 @@ from constants import (
     KEEPALIVE_SECONDS,
     MIN_ARB_PROFIT_PCT,
     THRESHOLDS,
+    PRICE_MAX_AGE_HOURS,
+    MAX_PRICES_PER_SOURCE,
 )
 from db.models import (
     ArbOpportunity,
@@ -41,11 +43,73 @@ from db.models import (
     MarketPrice,
     SessionLocal,
     TrackedMarket,
+    cleanup_old_data,
 )
 
 logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
+
+
+def _build_market_url(source: str, market_id: str, event_name: str,
+                      raw_payload=None, metadata_=None) -> str:
+    """Construct a direct URL to the market on its platform."""
+    src = (source or "").lower().strip()
+    q = event_name or ""
+
+    if src == "polymarket":
+        # metadata_ may contain slug from ingestion
+        if metadata_ and isinstance(metadata_, dict):
+            slug = metadata_.get("slug", "")
+            if slug:
+                return f"https://polymarket.com/event/{slug}"
+        # Fall back to search by question
+        from urllib.parse import quote
+        return f"https://polymarket.com/search?query={quote(q[:80])}"
+
+    if src == "kalshi":
+        # market_id is the ticker
+        if market_id:
+            return f"https://kalshi.com/markets/{market_id}"
+        return "https://kalshi.com"
+
+    if src == "predictit":
+        # raw_payload may contain market_url
+        if raw_payload and isinstance(raw_payload, dict):
+            url = raw_payload.get("market_url")
+            if url:
+                return url
+        # Extract numeric market ID from composite "marketid_contractid"
+        parts = (market_id or "").split("_")
+        if parts and parts[0].isdigit():
+            return f"https://www.predictit.org/markets/detail/{parts[0]}"
+        return "https://www.predictit.org/markets"
+
+    if src == "manifold":
+        if metadata_ and isinstance(metadata_, dict):
+            url = metadata_.get("url")
+            if url:
+                return url
+        from urllib.parse import quote
+        return f"https://manifold.markets/search?q={quote(q[:80])}"
+
+    # Sportsbooks — no deep links available, link to homepage
+    sportsbooks = {
+        "draftkings": "https://www.draftkings.com",
+        "fanduel": "https://www.fanduel.com",
+        "betmgm": "https://www.betmgm.com",
+        "caesars": "https://www.caesars.com/sportsbook-and-casino",
+        "pointsbet": "https://www.pointsbet.com",
+        "betrivers": "https://www.betrivers.com",
+        "bovada": "https://www.bovada.lv",
+        "bet365": "https://www.bet365.com",
+        "pinnacle": "https://www.pinnacle.com",
+    }
+    for name, url in sportsbooks.items():
+        if name in src:
+            return url
+
+    return ""
 
 
 # ===================================================================
@@ -192,6 +256,12 @@ async def run_arb() -> None:
             # Use implied_probability or fall back to yes_price
             prob = p.implied_probability or p.yes_price or 0
             odds = p.raw_odds or (1.0 / prob if prob > 0 else None)
+            # Build direct market URL from available data
+            market_url = _build_market_url(
+                p.source, p.market_id, name,
+                raw_payload=p.raw_payload,
+                metadata_=p.metadata_,
+            )
             price_dicts.append({
                 "source": p.source,
                 "market_id": p.market_id,
@@ -200,6 +270,7 @@ async def run_arb() -> None:
                 "implied_probability": prob,
                 "raw_odds": odds,
                 "category": p.category or "other",
+                "market_url": market_url,
             })
 
         opportunities = detect_arb(price_dicts)
@@ -275,9 +346,9 @@ async def run_discrepancy() -> None:
             return
 
         # Build a lookup of public-data implied probabilities by source
-        # FRED/economic data is stored with source="fred"
-        public_sources = ["fred", "coingecko"]
-        public_data_map: dict[str, float] = {}
+        # FRED/economic data is stored with source="fred", weather with "weather"
+        public_sources = ["fred", "coingecko", "weather"]
+        public_data: list = []
         for src in public_sources:
             prices = (
                 db.query(MarketPrice)
@@ -287,12 +358,10 @@ async def run_discrepancy() -> None:
                 )
                 .all()
             )
-            for p in prices:
-                if p.implied_probability and p.implied_probability > 0:
-                    public_data_map[f"{src}:{p.market_id}"] = p.implied_probability
+            public_data.extend(prices)
 
-        # Load prediction market prices (Kalshi, Polymarket, PredictIt)
-        prediction_sources = ["kalshi", "polymarket", "predictit"]
+        # Load prediction market prices (Kalshi, Polymarket, PredictIt, Manifold)
+        prediction_sources = ["kalshi", "polymarket", "predictit", "manifold"]
         pred_prices = (
             db.query(MarketPrice)
             .filter(
@@ -306,20 +375,103 @@ async def run_discrepancy() -> None:
             logger.debug("run_discrepancy: no prediction market prices")
             return
 
-        # Compare prediction markets against each other (cross-platform)
-        # Group by event_name similarity for cross-source comparison
         from collections import defaultdict
+        discrepancies = []
+        seen = set()
+
+        # ---------------------------------------------------------------
+        # Part 1: Compare prediction markets vs PUBLIC DATA (weather, FRED)
+        # This is the KEY feature — real data vs market prices
+        # ---------------------------------------------------------------
+        if public_data:
+            # Use token-based matching to find prediction markets that
+            # relate to public data points
+            import re
+            _stop = {"will", "the", "a", "an", "in", "of", "to", "for", "by",
+                      "on", "at", "be", "is", "it", "and", "or", "not", "this",
+                      "that", "with", "from", "yes", "no", "market", "price"}
+
+            def _tokens(text):
+                return set(re.findall(r'[a-z0-9]+', (text or "").lower())) - _stop
+
+            for pub in public_data:
+                pub_tokens = _tokens(pub.event_name)
+                if len(pub_tokens) < 2:
+                    continue
+                pub_prob = pub.implied_probability
+                if not pub_prob or pub_prob <= 0:
+                    continue
+
+                for pred in pred_prices:
+                    pred_tokens = _tokens(pred.event_name)
+                    if len(pred_tokens) < 2:
+                        continue
+
+                    shared = pub_tokens & pred_tokens
+                    if len(shared) < 2:
+                        continue
+
+                    # Jaccard similarity
+                    union = pub_tokens | pred_tokens
+                    sim = len(shared) / len(union) if union else 0
+                    if sim < 0.3:
+                        continue
+
+                    pred_prob = pred.implied_probability
+                    if not pred_prob or pred_prob <= 0:
+                        continue
+
+                    edge = abs(pred_prob - pub_prob)
+                    category = pub.category or pred.category or "other"
+                    threshold = THRESHOLDS.get(category, 0.10)
+
+                    if edge < threshold:
+                        continue
+
+                    disc_key = f"pub:{pub.source}:{pub.market_id}:{pred.source}:{pred.market_id}"
+                    if disc_key in seen:
+                        continue
+                    seen.add(disc_key)
+
+                    # Determine confidence based on source type
+                    confidence = "high" if pub.source in ("fred", "weather") else "medium"
+                    data_notes = f"Public data ({pub.source}) implies {pub_prob:.1%}, market at {pred_prob:.1%}"
+                    if pub.metadata_ and isinstance(pub.metadata_, dict):
+                        ti = pub.metadata_.get("threshold_info")
+                        if ti:
+                            data_notes += f" | {ti.get('metric', '')}: threshold {ti.get('threshold', '')}"
+
+                    result = detect_discrepancy(
+                        {
+                            "market_id": pred.market_id,
+                            "source": pred.source,
+                            "event_name": pred.event_name or "",
+                            "implied_probability": pred_prob,
+                        },
+                        {
+                            "derived_probability": pub_prob,
+                            "value": pub_prob,
+                            "unit": "probability",
+                            "source": pub.source,
+                            "confidence": confidence,
+                            "notes": data_notes,
+                        },
+                        category,
+                    )
+                    if result:
+                        discrepancies.append(result.to_dict())
+
+            logger.info(f"run_discrepancy: {len(discrepancies)} public-data discrepancies found")
+
+        # ---------------------------------------------------------------
+        # Part 2: Cross-platform prediction market comparison
+        # ---------------------------------------------------------------
         event_groups: dict[str, list] = defaultdict(list)
         for p in pred_prices:
-            # Normalize event name for grouping
             key = (p.event_name or "").lower().strip()[:80]
             if key and p.implied_probability and p.implied_probability > 0:
                 event_groups[key].append(p)
 
-        discrepancies = []
-        seen = set()
-
-        # Find cross-platform discrepancies (same event, different sources)
         for key, prices in event_groups.items():
             if len(prices) < 2:
                 continue
@@ -327,7 +479,6 @@ async def run_discrepancy() -> None:
             if len(sources) < 2:
                 continue
 
-            # Compare each pair of sources
             for i, p1 in enumerate(prices):
                 for p2 in prices[i + 1:]:
                     if p1.source == p2.source:
@@ -498,6 +649,18 @@ async def discover_markets() -> None:
 # Keepalive
 # ===================================================================
 
+async def run_cleanup() -> None:
+    """Purge old DB rows to keep memory under control."""
+    try:
+        result = cleanup_old_data(
+            max_age_hours=PRICE_MAX_AGE_HOURS,
+            max_per_source=MAX_PRICES_PER_SOURCE,
+        )
+        logger.info(f"run_cleanup: purged {result}")
+    except Exception as exc:
+        logger.error(f"run_cleanup failed: {exc}", exc_info=True)
+
+
 async def keepalive() -> None:
     """
     Ping own /ping endpoint to prevent cold-start on hosting platforms
@@ -533,7 +696,8 @@ def start_scheduler() -> None:
         job_defaults={"misfire_grace_time": 60},
     )
 
-    # --- Ingestion jobs (staggered to avoid OOM on 512MB free tier) ---
+    # --- Ingestion jobs (heavily staggered to avoid OOM on 512 MB) ---
+    # Each job starts at a different offset so only ONE runs at a time.
     _now = datetime.now(timezone.utc)
     _scheduler.add_job(
         fetch_odds,
@@ -543,7 +707,7 @@ def start_scheduler() -> None:
         name="Odds API ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now,
+        next_run_time=_now + timedelta(seconds=5),
     )
     _scheduler.add_job(
         fetch_kalshi,
@@ -553,7 +717,7 @@ def start_scheduler() -> None:
         name="Kalshi ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=10),
+        next_run_time=_now + timedelta(seconds=30),
     )
     _scheduler.add_job(
         fetch_polymarket,
@@ -563,7 +727,7 @@ def start_scheduler() -> None:
         name="Polymarket ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=20),
+        next_run_time=_now + timedelta(seconds=55),
     )
     _scheduler.add_job(
         fetch_predictit,
@@ -573,7 +737,7 @@ def start_scheduler() -> None:
         name="PredictIt ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=30),
+        next_run_time=_now + timedelta(seconds=80),
     )
     _scheduler.add_job(
         fetch_manifold,
@@ -583,7 +747,7 @@ def start_scheduler() -> None:
         name="Manifold Markets ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=60),
+        next_run_time=_now + timedelta(seconds=105),
     )
     _scheduler.add_job(
         fetch_weather,
@@ -593,7 +757,7 @@ def start_scheduler() -> None:
         name="Weather data ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=40),
+        next_run_time=_now + timedelta(seconds=130),
     )
     _scheduler.add_job(
         fetch_economic,
@@ -603,36 +767,51 @@ def start_scheduler() -> None:
         name="Economic data ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=50),
+        next_run_time=_now + timedelta(seconds=155),
     )
 
-    # --- Detection / analysis jobs ---
+    # --- Detection / analysis jobs (run after first data arrives) ---
     _scheduler.add_job(
         run_arb,
         "interval",
-        seconds=60,
+        seconds=90,
         id="run_arb",
         name="Arb detection",
         replace_existing=True,
         max_instances=1,
+        next_run_time=_now + timedelta(seconds=60),
     )
     _scheduler.add_job(
         run_discrepancy,
         "interval",
-        seconds=120,
+        seconds=180,
         id="run_discrepancy",
         name="Discrepancy detection",
         replace_existing=True,
         max_instances=1,
+        next_run_time=_now + timedelta(seconds=120),
     )
     _scheduler.add_job(
         discover_markets,
         "interval",
-        seconds=300,
+        seconds=600,
         id="discover_markets",
         name="Market discovery / mapping",
         replace_existing=True,
         max_instances=1,
+        next_run_time=_now + timedelta(seconds=180),
+    )
+
+    # --- DB cleanup (critical for memory on 512 MB) ---
+    _scheduler.add_job(
+        run_cleanup,
+        "interval",
+        seconds=300,
+        id="run_cleanup",
+        name="DB cleanup",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=90),
     )
 
     # --- Keepalive ---

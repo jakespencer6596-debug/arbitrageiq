@@ -257,9 +257,11 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                     {/* Books */}
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {books.length > 0
-                          ? books.map((b, i) => {
-                              const url = bookUrl(b, opp.event_name)
+                        {opp.legs && opp.legs.length > 0
+                          ? opp.legs.map((leg, i) => {
+                              const b = leg.source || leg.book || leg.platform || ''
+                              // Prefer direct market_url from leg data, fall back to search URL
+                              const url = leg.market_url || bookUrl(b, opp.event_name)
                               return url ? (
                                 <a
                                   key={i}

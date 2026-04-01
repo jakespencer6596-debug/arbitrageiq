@@ -269,6 +269,7 @@ class PolymarketClient:
                                     "yes_price": yes_price,
                                     "no_price": no_price,
                                     "raw": None,
+                                    "slug": slug,
                                 }
                             )
 
@@ -313,6 +314,7 @@ class PolymarketClient:
                             volume=r.get("volume"),
                             raw_payload=r.get("raw"),
                             fetched_at=r["timestamp"],
+                            metadata_={"slug": r.get("slug", "")} if r.get("slug") else {},
                         )
                     )
 

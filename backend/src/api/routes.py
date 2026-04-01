@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
+# In-memory snapshot cache for instant first load
+# ---------------------------------------------------------------------------
+_snapshot_cache: dict[str, Any] = {}
+_snapshot_ts: float = 0
+
+# ---------------------------------------------------------------------------
 # WebSocket broadcast infrastructure
 # ---------------------------------------------------------------------------
 _ws_clients: set[WebSocket] = set()
@@ -87,6 +93,67 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
         except Exception:
             continue
     return d
+
+
+# ---------------------------------------------------------------------------
+# GET /snapshot — ultra-fast cached endpoint for instant first load
+# ---------------------------------------------------------------------------
+@router.get("/snapshot")
+async def get_snapshot():
+    """
+    Return a cached snapshot of key dashboard data.
+    Updates at most once every 30 seconds. Designed to respond instantly
+    so the frontend shows something useful before full data loads.
+    """
+    import time
+    global _snapshot_cache, _snapshot_ts
+
+    now = time.time()
+    if _snapshot_cache and (now - _snapshot_ts) < 30:
+        return _snapshot_cache
+
+    db = SessionLocal()
+    try:
+        arbs = (
+            db.query(ArbOpportunity)
+            .filter(ArbOpportunity.is_active == True)  # noqa: E712
+            .order_by(ArbOpportunity.profit_pct.desc())
+            .limit(10)
+            .all()
+        )
+        discs = (
+            db.query(Discrepancy)
+            .filter(Discrepancy.is_active == True)  # noqa: E712
+            .order_by(Discrepancy.edge_pct.desc())
+            .limit(10)
+            .all()
+        )
+        total_markets = db.query(func.count(TrackedMarket.id)).scalar() or 0
+        active_arbs = (
+            db.query(func.count(ArbOpportunity.id))
+            .filter(ArbOpportunity.is_active == True)  # noqa: E712
+            .scalar() or 0
+        )
+        active_discs = (
+            db.query(func.count(Discrepancy.id))
+            .filter(Discrepancy.is_active == True)  # noqa: E712
+            .scalar() or 0
+        )
+
+        _snapshot_cache = {
+            "arb": [_row_to_dict(a) for a in arbs],
+            "discrepancies": [_row_to_dict(d) for d in discs],
+            "stats": {
+                "total_markets": total_markets,
+                "active_arbs": active_arbs,
+                "active_discrepancies": active_discs,
+            },
+            "cached": True,
+        }
+        _snapshot_ts = now
+        return _snapshot_cache
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

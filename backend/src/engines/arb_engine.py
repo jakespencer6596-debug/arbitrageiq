@@ -2,6 +2,9 @@
 Arbitrage detection engine.
 Scans all current market prices for guaranteed-profit opportunities
 across sportsbooks and prediction markets.
+
+IMPORTANT: Only reports TRUE mathematical arbitrages (arb_sum < 1.0),
+never price differences between potentially unrelated markets.
 """
 
 import sys
@@ -21,6 +24,7 @@ class ArbLeg:
     implied_prob: float
     stake_pct: float
     stake_dollars: float
+    market_url: str = ""
 
 
 @dataclass
@@ -47,6 +51,7 @@ class ArbOpportunityResult:
                     "implied_prob": leg.implied_prob,
                     "stake_pct": leg.stake_pct,
                     "stake_dollars": leg.stake_dollars,
+                    "market_url": leg.market_url,
                 }
                 for leg in self.legs
             ],
@@ -83,8 +88,23 @@ def strip_vig_multiplicative(implied_probs: list[float]) -> list[float]:
 _STOP_WORDS = frozenset({
     "will", "the", "a", "an", "in", "of", "to", "for", "by", "on", "at",
     "be", "is", "it", "and", "or", "not", "this", "that", "with", "from",
-    "win", "yes", "no", "?", "2025", "2026", "2027",
+    "win", "yes", "no", "2024", "2025", "2026", "2027", "2028",
+    "who", "what", "how", "when", "where", "before", "after",
+    "market", "prediction", "contract", "price",
 })
+
+
+def _normalize_event_name(text: str) -> str:
+    """
+    Normalize event name for matching.
+    Strips platform-specific formatting (e.g. PredictIt's
+    "Market Name -- Contract Name" format).
+    """
+    # PredictIt uses "Market Name -- Contract Name"
+    # Use only the market name for matching to avoid noise from contract names
+    if " -- " in text:
+        text = text.split(" -- ")[0]
+    return text.strip()
 
 
 def _tokenize(text: str) -> set[str]:
@@ -103,20 +123,29 @@ def _similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
     return len(intersection) / len(union)
 
 
+# ---------------------------------------------------------------------------
+# Configurable thresholds
+# ---------------------------------------------------------------------------
+SIMILARITY_THRESHOLD = 0.55    # Jaccard similarity minimum
+MIN_SHARED_TOKENS = 3          # Must share at least 3 meaningful tokens
+MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
+
+
 def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOpportunityResult]:
     """
-    Cross-platform arbitrage detection with fuzzy event name matching.
+    Cross-platform arbitrage detection with strict event name matching.
 
     Strategy:
-    1. Parse all prices into a standard format
+    1. Parse all prices, normalize event names
     2. Build an inverted index of tokens -> markets for efficient matching
-    3. For markets sharing 2+ tokens from DIFFERENT sources, check similarity
-    4. If similarity > 0.4, treat as same event and check for price arb
+    3. For markets sharing 3+ tokens from DIFFERENT sources, check similarity
+    4. If similarity > SIMILARITY_THRESHOLD, treat as same event
+    5. ONLY report true mathematical arbs (arb_sum < 1.0)
+    6. Reject anything above MAX_PROFIT_PCT as a likely matching error
 
     Returns list of ArbOpportunityResult sorted by profit_pct descending.
     """
     from collections import defaultdict
-    import re
 
     # 1. Parse all prices
     parsed = []
@@ -128,6 +157,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             implied_prob = price.get("implied_probability", 0)
             raw_odds = price.get("raw_odds")
             category = price.get("category", "other")
+            market_url = price.get("market_url", "")
         else:
             event_name = getattr(price, "event_name", "")
             outcome = getattr(price, "outcome", "")
@@ -135,6 +165,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             implied_prob = getattr(price, "implied_probability", 0)
             raw_odds = getattr(price, "raw_odds", None)
             category = getattr(price, "category", "other")
+            market_url = getattr(price, "market_url", "")
 
         if not event_name or not source or not implied_prob:
             continue
@@ -148,18 +179,22 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         else:
             continue
 
-        tokens = _tokenize(event_name)
-        if len(tokens) < 2:
-            continue
+        # Normalize event name before tokenizing
+        normalized = _normalize_event_name(event_name)
+        tokens = _tokenize(normalized)
+        if len(tokens) < 3:
+            continue  # Need at least 3 meaningful tokens
 
         parsed.append({
             "event_name": event_name,
+            "normalized_name": normalized,
             "outcome": (outcome or "yes").lower().strip(),
             "source": source.lower().strip(),
             "implied_prob": implied_prob,
             "decimal_odds": decimal_odds,
             "category": category,
             "tokens": tokens,
+            "market_url": market_url or "",
             "idx": len(parsed),
         })
 
@@ -172,8 +207,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         for token in p["tokens"]:
             token_index[token].append(p["idx"])
 
-    # 3. Find candidate pairs (different sources, sharing 2+ tokens)
-    # Use the inverted index to avoid O(n^2) comparison
+    # 3. Find candidate pairs (different sources, sharing tokens)
     candidate_pairs: set[tuple[int, int]] = set()
     for token, indices in token_index.items():
         if len(indices) > 500:
@@ -190,7 +224,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if len(candidate_pairs) > 50000:
             break
 
-    # 4. Check each candidate pair for similarity + arb
+    # 4. Check each candidate pair for similarity + TRUE arb
     results = []
     seen = set()
 
@@ -198,51 +232,62 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         a = parsed[idx_a]
         b = parsed[idx_b]
 
-        sim = _similarity(a["tokens"], b["tokens"])
-        if sim < 0.4:
+        # Require minimum shared token count
+        shared = a["tokens"] & b["tokens"]
+        if len(shared) < MIN_SHARED_TOKENS:
             continue
 
-        # Same event, different sources — check for price discrepancy
-        # For YES/YES comparison: if one platform prices YES much higher,
-        # buy YES on the cheap platform, buy NO on the expensive one
+        sim = _similarity(a["tokens"], b["tokens"])
+        if sim < SIMILARITY_THRESHOLD:
+            continue
+
+        # Same event, different sources — check for arb
         prob_a = a["implied_prob"]
         prob_b = b["implied_prob"]
-        edge = abs(prob_a - prob_b)
 
-        if edge < MIN_ARB_PROFIT_PCT:
-            continue
-
-        # Determine direction
+        # Determine direction: buy YES on cheap, buy NO on expensive
         if prob_a < prob_b:
             cheap, expensive = a, b
         else:
             cheap, expensive = b, a
 
-        # Build as: Buy YES on cheap source, Buy NO on expensive source
         odds_yes = 1.0 / cheap["implied_prob"]
         odds_no = 1.0 / (1.0 - expensive["implied_prob"])
         arb_sum = (1.0 / odds_yes) + (1.0 / odds_no)
 
-        if arb_sum < 1.0:
-            profit_pct = 1.0 - arb_sum
-        else:
-            # Not a true arb but still a significant price discrepancy
-            profit_pct = edge
+        # ---------------------------------------------------------------
+        # CRITICAL: Only report TRUE mathematical arbitrages.
+        # arb_sum < 1.0 means guaranteed profit regardless of outcome.
+        # If arb_sum >= 1.0, there is NO arb — skip entirely.
+        # ---------------------------------------------------------------
+        if arb_sum >= 1.0:
+            continue
 
-        # Dedup
+        # Correct arb profit formula: guaranteed ROI on total stake
+        # e.g. arb_sum=0.95 → profit = (1/0.95)-1 = 5.26%
+        profit_pct = (1.0 / arb_sum) - 1.0
+
+        # Sanity check: reject unrealistically high profits
+        if profit_pct > MAX_PROFIT_PCT:
+            continue
+
+        # Must exceed minimum threshold
+        if profit_pct < MIN_ARB_PROFIT_PCT:
+            continue
+
+        # Dedup by source pair + normalized event name
         dedup_key = (
             tuple(sorted((a["source"], b["source"]))),
-            min(a["event_name"][:40].lower(), b["event_name"][:40].lower()),
+            min(a["normalized_name"][:50].lower(), b["normalized_name"][:50].lower()),
         )
         if dedup_key in seen:
             continue
         seen.add(dedup_key)
 
-        stake_pct1 = 0.5
-        stake_pct2 = 0.5
-        if arb_sum < 1.0 and arb_sum > 0:
-            stake_pct1 = (1.0 / odds_yes) / arb_sum
-            stake_pct2 = (1.0 / odds_no) / arb_sum
+        # Stakes proportional to implied probability so payouts are equal
+        # stake_i = bankroll * (1/odds_i) / arb_sum
+        stake_pct1 = (1.0 / odds_yes) / arb_sum
+        stake_pct2 = (1.0 / odds_no) / arb_sum
 
         legs = [
             ArbLeg(
@@ -252,6 +297,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
                 implied_prob=round(cheap["implied_prob"], 4),
                 stake_pct=round(stake_pct1, 4),
                 stake_dollars=round(base_stake * stake_pct1, 2),
+                market_url=cheap["market_url"],
             ),
             ArbLeg(
                 source=expensive["source"],
@@ -260,11 +306,12 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
                 implied_prob=round(1.0 - expensive["implied_prob"], 4),
                 stake_pct=round(stake_pct2, 4),
                 stake_dollars=round(base_stake * stake_pct2, 2),
+                market_url=expensive["market_url"],
             ),
         ]
 
         results.append(ArbOpportunityResult(
-            event_name=f"{cheap['event_name'][:60]} vs {expensive['source']}",
+            event_name=f"{cheap['normalized_name'][:60]} vs {expensive['source']}",
             category=a["category"],
             profit_pct=round(profit_pct, 4),
             legs=legs,
