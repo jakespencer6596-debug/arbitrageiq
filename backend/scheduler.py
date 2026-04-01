@@ -225,9 +225,11 @@ async def run_arb() -> None:
     """
     db = SessionLocal()
     try:
-        # 0. Expire all existing arbs before detecting new ones
+        # 0. Expire arbs older than 10 minutes (keep recent ones visible)
+        expire_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
         db.query(ArbOpportunity).filter(
-            ArbOpportunity.is_active == True  # noqa: E712
+            ArbOpportunity.is_active == True,  # noqa: E712
+            ArbOpportunity.detected_at < expire_cutoff,
         ).update({"is_active": False})
         db.commit()
 

@@ -267,6 +267,12 @@ class KalshiClient:
         try:
             db = SessionLocal()
             try:
+                # Deactivate old Kalshi prices before inserting fresh ones
+                db.query(MarketPrice).filter(
+                    MarketPrice.source == "kalshi",
+                    MarketPrice.is_active == True,  # noqa: E712
+                ).update({"is_active": False})
+
                 for r in results:
                     db.add(
                         MarketPrice(

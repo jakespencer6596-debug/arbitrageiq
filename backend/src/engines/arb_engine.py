@@ -90,20 +90,26 @@ _STOP_WORDS = frozenset({
     "be", "is", "it", "and", "or", "not", "this", "that", "with", "from",
     "win", "yes", "no", "2024", "2025", "2026", "2027", "2028",
     "who", "what", "how", "when", "where", "before", "after",
-    "market", "prediction", "contract", "price",
+    "market", "prediction", "contract", "price", "read", "description",
+    "question", "resolve", "resolves", "resolution", "end", "date",
 })
 
 
 def _normalize_event_name(text: str) -> str:
     """
     Normalize event name for matching.
-    Strips platform-specific formatting (e.g. PredictIt's
-    "Market Name -- Contract Name" format).
+    Strips platform-specific formatting across Kalshi, Polymarket, PredictIt, Manifold.
     """
+    import re
     # PredictIt uses "Market Name -- Contract Name"
-    # Use only the market name for matching to avoid noise from contract names
     if " -- " in text:
         text = text.split(" -- ")[0]
+    # Kalshi uses all-caps tickers mixed in — strip them
+    # Manifold uses "[READ DESCRIPTION]" prefixes
+    text = re.sub(r'\[.*?\]', '', text)
+    # Strip "Will ... ?" framing common on prediction markets
+    text = re.sub(r'^will\s+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\?+$', '', text)
     return text.strip()
 
 
@@ -126,8 +132,8 @@ def _similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
 # ---------------------------------------------------------------------------
 # Configurable thresholds
 # ---------------------------------------------------------------------------
-SIMILARITY_THRESHOLD = 0.55    # Jaccard similarity minimum
-MIN_SHARED_TOKENS = 3          # Must share at least 3 meaningful tokens
+SIMILARITY_THRESHOLD = 0.40    # Jaccard similarity minimum (lowered for cross-platform)
+MIN_SHARED_TOKENS = 2          # Must share at least 2 meaningful tokens
 MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
 
 

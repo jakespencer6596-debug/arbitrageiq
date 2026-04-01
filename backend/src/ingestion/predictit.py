@@ -238,6 +238,12 @@ class PredictItClient:
         try:
             db = SessionLocal()
             try:
+                # Deactivate old PredictIt prices before inserting fresh ones
+                db.query(MarketPrice).filter(
+                    MarketPrice.source == "predictit",
+                    MarketPrice.is_active == True,  # noqa: E712
+                ).update({"is_active": False})
+
                 seen_markets: set[str] = set()
 
                 for r in results:
