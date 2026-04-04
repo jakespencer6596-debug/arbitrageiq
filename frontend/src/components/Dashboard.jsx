@@ -4,7 +4,29 @@ import DiscrepancyFeed from './DiscrepancyFeed'
 import MarketMap from './MarketMap'
 import LiveFeed from './LiveFeed'
 
+const CATEGORY_LABELS = {
+  politics: { name: 'Politics', color: 'purple' },
+  sports: { name: 'Sports', color: 'green' },
+  crypto: { name: 'Crypto & Finance', color: 'orange' },
+  entertainment: { name: 'Entertainment', color: 'pink' },
+  science_tech: { name: 'Science & Tech', color: 'blue' },
+  weather: { name: 'Weather & Climate', color: 'cyan' },
+  other: { name: 'Other', color: 'gray' },
+}
+
+const CATEGORY_DOT_COLORS = {
+  purple: 'bg-purple-400',
+  green: 'bg-green-400',
+  orange: 'bg-orange-400',
+  pink: 'bg-pink-400',
+  blue: 'bg-blue-400',
+  cyan: 'bg-cyan-400',
+  gray: 'bg-gray-400',
+}
+
 export default function Dashboard({
+  activeCategory,
+  onChangeCategory,
   opportunities,
   discrepancies,
   markets,
@@ -17,18 +39,17 @@ export default function Dashboard({
   onToggleLiveFeed,
   onSelectOpportunity,
 }) {
-  const marketCount = stats?.total_markets || markets?.length || 0
   const activeArbs = stats?.active_arbs ?? opportunities?.length ?? 0
-  const discrepancyCount = stats?.active_discrepancies ?? discrepancies?.length ?? 0
   const isConnected = apiConnected || wsConnected
   const isLoading = stats === null
+  const catInfo = CATEGORY_LABELS[activeCategory] || { name: activeCategory, color: 'gray' }
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* ── Top Nav ── */}
+      {/* ��─ Top Nav ── */}
       <nav className="sticky top-0 z-40 bg-gray-900/80 backdrop-blur-lg border-b border-gray-800">
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          {/* Logo */}
+          {/* Logo + Category */}
           <div className="flex items-center gap-3">
             <span className="text-2xl font-extrabold bg-gradient-to-r from-green-400 to-emerald-500 bg-clip-text text-transparent tracking-tight">
               ArbitrageIQ
@@ -36,18 +57,26 @@ export default function Dashboard({
             <span className="hidden sm:inline text-xs text-gray-500 font-medium border border-gray-700 rounded px-1.5 py-0.5">
               BETA
             </span>
+            {/* Active category badge */}
+            <div className="flex items-center gap-2 ml-2">
+              <span className={`w-2 h-2 rounded-full ${CATEGORY_DOT_COLORS[catInfo.color] || 'bg-gray-400'}`} />
+              <span className="text-sm font-medium text-gray-300">{catInfo.name}</span>
+              <button
+                onClick={onChangeCategory}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors ml-1 px-2 py-0.5 rounded border border-gray-700 hover:border-gray-500"
+              >
+                Change
+              </button>
+            </div>
           </div>
 
           {/* Centre stats badges */}
           <div className="hidden md:flex items-center gap-3">
-            <StatBadge label="Markets" value={marketCount} color="blue" />
             <StatBadge label="Active Arbs" value={activeArbs} color="green" />
-            <StatBadge label="Discrepancies" value={discrepancyCount} color="yellow" />
           </div>
 
           {/* Right side */}
           <div className="flex items-center gap-4">
-            {/* Connection indicator */}
             <div className="flex items-center gap-2 text-sm">
               <span
                 className={`w-2.5 h-2.5 rounded-full ${
@@ -60,30 +89,17 @@ export default function Dashboard({
                 {isConnected ? 'Live' : 'Offline'}
               </span>
             </div>
-
-            {/* Info tooltip */}
-            <div
-              className="p-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors cursor-default"
-              title="ArbitrageIQ scans prediction markets for arbitrage opportunities in real-time."
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"
-                />
-              </svg>
-            </div>
           </div>
         </div>
       </nav>
 
       {/* ── Mobile stats row ── */}
       <div className="md:hidden flex items-center gap-2 px-4 py-2 overflow-x-auto bg-gray-900/50 border-b border-gray-800">
-        <StatBadge label="Markets" value={marketCount} color="blue" />
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${CATEGORY_DOT_COLORS[catInfo.color] || 'bg-gray-400'}`} />
+          <span className="text-xs text-gray-300 font-medium">{catInfo.name}</span>
+        </div>
         <StatBadge label="Arbs" value={activeArbs} color="green" />
-        <StatBadge label="Disc." value={discrepancyCount} color="yellow" />
       </div>
 
       {/* ── Loading State ── */}
@@ -93,12 +109,12 @@ export default function Dashboard({
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="text-gray-400 text-sm font-medium">Connecting to server...</p>
-          <p className="text-gray-600 text-xs mt-1">Fetching market data and scanning for opportunities</p>
+          <p className="text-gray-400 text-sm font-medium">Scanning {catInfo.name} markets...</p>
+          <p className="text-gray-600 text-xs mt-1">Fetching data from prediction markets and analyzing for arbitrage</p>
         </div>
       )}
 
-      {/* ── Main Content ── */}
+      {/* ── Main Content ─��� */}
       {!isLoading && (
       <main className="flex-1 max-w-[1920px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Two-column grid */}
@@ -113,7 +129,7 @@ export default function Dashboard({
 
           {/* Right - Discrepancy Feed (1/3) */}
           <div className="lg:col-span-1">
-            <DiscrepancyFeed discrepancies={discrepancies} stats={stats} />
+            <DiscrepancyFeed />
           </div>
         </div>
 

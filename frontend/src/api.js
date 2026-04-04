@@ -21,6 +21,13 @@ export const api = {
   getMarkets: () => request('/api/markets'),
   getHealth: () => request('/api/health'),
   getStats: () => request('/api/stats'),
+  getCategories: () => request('/api/categories'),
+  getCategory: () => request('/api/category'),
+  setCategory: (category) =>
+    request('/api/category', {
+      method: 'POST',
+      body: JSON.stringify({ category }),
+    }),
   testAlert: () =>
     request('/api/alerts/test', {
       method: 'POST',

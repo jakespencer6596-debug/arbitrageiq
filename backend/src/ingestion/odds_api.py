@@ -14,6 +14,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from constants import ODDS_API_KEY, ODDS_API_BASE, BUDGET_MODE
+import constants
 from db.models import SessionLocal, MarketPrice, SystemStatus
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,11 @@ class OddsAPIClient:
 
         if not self.api_key:
             logger.warning("No ODDS_API_KEY configured -- skipping odds fetch")
+            return []
+
+        # Only fetch if active category is sports (saves API credits)
+        if constants.ACTIVE_CATEGORY != "sports":
+            logger.info(f"Odds API: active category is '{constants.ACTIVE_CATEGORY}' — skipping (sports only)")
             return []
 
         results: list[dict] = []

@@ -64,16 +64,8 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Startup cleanup failed (non-fatal): {exc}")
 
-    # 2. Telegram bot (optional — may not be configured yet)
-    try:
-        from alerts.telegram import init_bot
-
-        await init_bot()
-        logger.info("Telegram bot initialised")
-    except ImportError:
-        logger.warning("alerts.telegram module not available — Telegram alerts disabled")
-    except Exception as exc:
-        logger.error(f"Telegram bot init failed (non-fatal): {exc}")
+    # 2. Telegram alerts disabled (focus on core arb detection)
+    logger.info("Telegram alerts disabled")
 
     # 3. Scheduler
     start_scheduler()

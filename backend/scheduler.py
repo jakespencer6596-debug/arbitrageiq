@@ -29,11 +29,7 @@ from constants import (
     POLYMARKET_POLL_SECONDS,
     PREDICTIT_POLL_SECONDS,
     MANIFOLD_POLL_SECONDS,
-    WEATHER_POLL_SECONDS,
-    ECONOMIC_POLL_SECONDS,
     KEEPALIVE_SECONDS,
-    MIN_ARB_PROFIT_PCT,
-    THRESHOLDS,
     PRICE_MAX_AGE_HOURS,
     MAX_PRICES_PER_SOURCE,
 )
@@ -63,9 +59,9 @@ def _build_market_url(source: str, market_id: str, event_name: str,
             slug = metadata_.get("slug", "")
             if slug:
                 return f"https://polymarket.com/event/{slug}"
-        # Fall back to search by question
+        # Fall back to search
         from urllib.parse import quote
-        return f"https://polymarket.com/search?query={quote(q[:80])}"
+        return f"https://polymarket.com/markets?_q={quote(q[:80])}"
 
     if src == "kalshi":
         # market_id is the ticker
@@ -223,13 +219,17 @@ async def run_arb() -> None:
     Load active MarketPrices, run the arb detection engine, persist
     any new ArbOpportunity rows, send alerts, and broadcast via WS.
     """
+    # Skip if no category selected
+    from constants import ACTIVE_CATEGORY
+    if ACTIVE_CATEGORY is None:
+        return
+
     db = SessionLocal()
     try:
-        # 0. Expire arbs older than 10 minutes (keep recent ones visible)
-        expire_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        # 0. Deactivate ALL existing active arbs before inserting fresh ones
+        # This prevents duplicate accumulation across detection cycles
         db.query(ArbOpportunity).filter(
             ArbOpportunity.is_active == True,  # noqa: E712
-            ArbOpportunity.detected_at < expire_cutoff,
         ).update({"is_active": False})
         db.commit()
 
@@ -302,18 +302,7 @@ async def run_arb() -> None:
         db.commit()
         logger.info(f"run_arb: saved {saved_count} opportunities to DB")
 
-        # 4. Send alerts
-        try:
-            from alerts.telegram import send_arb_alert
-
-            for opp in opportunities:
-                await send_arb_alert(opp)
-        except ImportError:
-            logger.debug("run_arb: alerts.telegram not available — skipping alerts")
-        except Exception as exc:
-            logger.error(f"run_arb: alert dispatch failed: {exc}")
-
-        # 5. Broadcast via WebSocket
+        # 4. Broadcast via WebSocket
         try:
             from api.routes import broadcast
 
@@ -709,7 +698,7 @@ def start_scheduler() -> None:
         name="Odds API ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=5),
+        next_run_time=_now + timedelta(seconds=10),
     )
     _scheduler.add_job(
         fetch_kalshi,
@@ -719,7 +708,7 @@ def start_scheduler() -> None:
         name="Kalshi ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=30),
+        next_run_time=_now + timedelta(seconds=50),
     )
     _scheduler.add_job(
         fetch_polymarket,
@@ -729,7 +718,7 @@ def start_scheduler() -> None:
         name="Polymarket ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=55),
+        next_run_time=_now + timedelta(seconds=90),
     )
     _scheduler.add_job(
         fetch_predictit,
@@ -739,7 +728,7 @@ def start_scheduler() -> None:
         name="PredictIt ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=80),
+        next_run_time=_now + timedelta(seconds=130),
     )
     _scheduler.add_job(
         fetch_manifold,
@@ -749,59 +738,18 @@ def start_scheduler() -> None:
         name="Manifold Markets ingestion",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=105),
+        next_run_time=_now + timedelta(seconds=170),
     )
-    _scheduler.add_job(
-        fetch_weather,
-        "interval",
-        seconds=WEATHER_POLL_SECONDS,
-        id="fetch_weather",
-        name="Weather data ingestion",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=130),
-    )
-    _scheduler.add_job(
-        fetch_economic,
-        "interval",
-        seconds=ECONOMIC_POLL_SECONDS,
-        id="fetch_economic",
-        name="Economic data ingestion",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=155),
-    )
-
-    # --- Detection / analysis jobs (run after first data arrives) ---
+    # --- Detection job (run after first data arrives) ---
     _scheduler.add_job(
         run_arb,
         "interval",
-        seconds=90,
+        seconds=120,
         id="run_arb",
         name="Arb detection",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=60),
-    )
-    _scheduler.add_job(
-        run_discrepancy,
-        "interval",
-        seconds=180,
-        id="run_discrepancy",
-        name="Discrepancy detection",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=120),
-    )
-    _scheduler.add_job(
-        discover_markets,
-        "interval",
-        seconds=600,
-        id="discover_markets",
-        name="Market discovery / mapping",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=180),
+        next_run_time=_now + timedelta(seconds=200),
     )
 
     # --- DB cleanup (critical for memory on 512 MB) ---

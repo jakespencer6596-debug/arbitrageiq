@@ -2,8 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { api, createWebSocket } from './api'
 import Dashboard from './components/Dashboard'
 import StakeCalculator from './components/StakeCalculator'
+import CategorySelector from './components/CategorySelector'
 
 export default function App() {
+  const [activeCategory, setActiveCategory] = useState(null)
+  const [categoryLoading, setCategoryLoading] = useState(false)
   const [opportunities, setOpportunities] = useState([])
   const [discrepancies, setDiscrepancies] = useState([])
   const [markets, setMarkets] = useState([])
@@ -16,6 +19,7 @@ export default function App() {
   const [apiConnected, setApiConnected] = useState(false)
 
   const wsRef = useRef(null)
+  const pollRef = useRef(null)
 
   const addFeedEvent = useCallback((event) => {
     setLiveFeed((prev) => {
@@ -38,22 +42,9 @@ export default function App() {
         case 'ws_reconnecting':
           addFeedEvent({ type: 'system', message: `Reconnecting (attempt ${data.attempt})...` })
           break
-        case 'new_opportunity':
-          setOpportunities((prev) => {
-            const exists = prev.find((o) => o.id === data.payload?.id)
-            if (exists) {
-              return prev.map((o) => (o.id === data.payload.id ? data.payload : o))
-            }
-            return [data.payload, ...prev]
-          })
-          addFeedEvent({ type: 'arb', message: `New arb: ${data.payload?.event_name || 'Unknown'} (${data.payload?.profit_pct?.toFixed(2) || '?'}%)` })
-          break
-        case 'opportunity_expired':
-          setOpportunities((prev) => prev.filter((o) => o.id !== data.payload?.id))
-          addFeedEvent({ type: 'arb_expired', message: `Arb expired: ${data.payload?.event_name || 'Unknown'}` })
-          break
-        case 'new_discrepancy':
-          addFeedEvent({ type: 'discrepancy', message: `Discrepancy: ${data.payload?.event_name || 'Unknown'} (${data.payload?.edge_pct?.toFixed(1) || '?'}% edge)` })
+        case 'arb':
+          // New arb detected via WebSocket
+          addFeedEvent({ type: 'arb', message: `New arb detected` })
           break
         case 'health_update':
           setHealth(data.payload)
@@ -62,7 +53,7 @@ export default function App() {
           setStats(data.payload)
           break
         default:
-          if (data.type && !data.type.startsWith('ws_')) {
+          if (data.type && !data.type.startsWith('ws_') && data.type !== 'connected' && data.type !== 'pong') {
             addFeedEvent({ type: 'info', message: data.message || `Event: ${data.type}` })
           }
       }
@@ -78,55 +69,81 @@ export default function App() {
     }
   }, [handleWsMessage])
 
-  // Fast snapshot on first load, then full polling
-  useEffect(() => {
-    // 1. Instant snapshot — loads in <200ms, shows something immediately
-    api.getSnapshot().then((snap) => {
-      if (snap) {
-        setOpportunities(snap.arb || [])
-        setDiscrepancies(snap.discrepancies || [])
-        if (snap.stats) setStats(snap.stats)
-        setApiConnected(true)
+  // Polling — only when a category is active
+  const fetchAll = useCallback(async () => {
+    if (!activeCategory) return
+    try {
+      const [opps, statsData, healthData] = await Promise.allSettled([
+        api.getOpportunities(),
+        api.getStats(),
+        api.getHealth(),
+      ])
+      let anySuccess = false
+      if (opps.status === 'fulfilled') {
+        const data = opps.value || {}
+        setOpportunities(data.arb || [])
+        anySuccess = true
       }
-    }).catch(() => {})
-
-    // 2. Full data fetch (slower, richer)
-    async function fetchAll() {
-      try {
-        const [opps, statsData, healthData] = await Promise.allSettled([
-          api.getOpportunities(),
-          api.getStats(),
-          api.getHealth(),
-        ])
-        let anySuccess = false
-        if (opps.status === 'fulfilled') {
-          const data = opps.value || {}
-          setOpportunities(data.arb || [])
-          setDiscrepancies(data.discrepancies || [])
-          anySuccess = true
-        }
-        if (statsData.status === 'fulfilled') { setStats(statsData.value); anySuccess = true }
-        if (healthData.status === 'fulfilled') { setHealth(healthData.value); anySuccess = true }
-        if (anySuccess) setApiConnected(true)
-      } catch {
-        setApiConnected(false)
-      }
+      if (statsData.status === 'fulfilled') { setStats(statsData.value); anySuccess = true }
+      if (healthData.status === 'fulfilled') { setHealth(healthData.value); anySuccess = true }
+      if (anySuccess) setApiConnected(true)
+    } catch {
+      setApiConnected(false)
     }
+  }, [activeCategory])
 
-    // Delay the full fetch slightly to let snapshot render first
-    const initialTimer = setTimeout(fetchAll, 2000)
-    const interval = setInterval(fetchAll, 20000)
-    return () => { clearTimeout(initialTimer); clearInterval(interval) }
-  }, [])
-
-  // Fetch markets once
   useEffect(() => {
-    api.getMarkets().then((data) => setMarkets(data?.markets || data || [])).catch(() => {})
-  }, [])
+    if (!activeCategory) return
+    // Initial fetch after category is set
+    fetchAll()
+    // Then poll every 15 seconds
+    pollRef.current = setInterval(fetchAll, 15000)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [activeCategory, fetchAll])
+
+  // Handle category selection
+  const handleSelectCategory = async (category) => {
+    setCategoryLoading(true)
+    setOpportunities([])
+    setStats(null)
+    setHealth(null)
+    setMarkets([])
+    try {
+      await api.setCategory(category)
+      setActiveCategory(category)
+      setApiConnected(true)
+      addFeedEvent({ type: 'system', message: `Scanning ${category} markets...` })
+    } catch (err) {
+      addFeedEvent({ type: 'system', message: `Failed to set category: ${err.message}` })
+    } finally {
+      setCategoryLoading(false)
+    }
+  }
+
+  // Handle going back to category selector
+  const handleChangeCategory = async () => {
+    try {
+      await api.setCategory(null)
+    } catch {}
+    setActiveCategory(null)
+    setOpportunities([])
+    setDiscrepancies([])
+    setStats(null)
+    setHealth(null)
+    setMarkets([])
+    if (pollRef.current) clearInterval(pollRef.current)
+  }
+
+  // Show category selector when no category is active
+  if (!activeCategory) {
+    return <CategorySelector onSelectCategory={handleSelectCategory} />
+  }
 
   return (
     <>
       <Dashboard
+        activeCategory={activeCategory}
+        onChangeCategory={handleChangeCategory}
         opportunities={opportunities}
         discrepancies={discrepancies}
         markets={markets}

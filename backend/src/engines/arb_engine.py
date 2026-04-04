@@ -7,6 +7,7 @@ IMPORTANT: Only reports TRUE mathematical arbitrages (arb_sum < 1.0),
 never price differences between potentially unrelated markets.
 """
 
+import re
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -88,11 +89,58 @@ def strip_vig_multiplicative(implied_probs: list[float]) -> list[float]:
 _STOP_WORDS = frozenset({
     "will", "the", "a", "an", "in", "of", "to", "for", "by", "on", "at",
     "be", "is", "it", "and", "or", "not", "this", "that", "with", "from",
-    "win", "yes", "no", "2024", "2025", "2026", "2027", "2028",
+    "win", "yes", "no", "2024", "2025", "2026", "2027", "2028", "2029", "2030",
     "who", "what", "how", "when", "where", "before", "after",
     "market", "prediction", "contract", "price", "read", "description",
     "question", "resolve", "resolves", "resolution", "end", "date",
+    "happen", "next", "between", "during", "about", "over", "under",
+    "more", "less", "become", "likely", "whether", "could", "would", "should",
+    "than", "much", "many", "does", "do", "did", "has", "have", "been",
 })
+
+
+# ---------------------------------------------------------------------------
+# Entity extraction for accurate matching
+# ---------------------------------------------------------------------------
+_COUNTRIES = frozenset({
+    "us", "usa", "united states", "uk", "united kingdom", "china", "russia",
+    "india", "brazil", "colombia", "colombian", "mexico", "mexican",
+    "france", "french", "germany", "german", "japan", "japanese",
+    "canada", "canadian", "australia", "australian",
+    "israel", "israeli", "iran", "iranian", "ukraine", "ukrainian",
+    "taiwan", "south korea", "korean", "north korea",
+    "peru", "peruvian", "argentina", "argentine", "chile", "chilean",
+    "turkey", "turkish", "italy", "italian", "spain", "spanish",
+    "poland", "polish", "philippines", "filipino",
+    "nigeria", "nigerian", "south africa", "kenya", "kenyan",
+    "egypt", "egyptian", "saudi", "pakistan", "pakistani",
+    "indonesia", "indonesian", "thailand", "thai", "vietnam", "vietnamese",
+})
+
+
+def _extract_entities(text: str) -> set[str]:
+    """
+    Extract distinguishing entities from event text.
+    Returns country names, year tokens, and multi-word proper nouns.
+    These MUST match between two events for them to be considered the same.
+    """
+    lower = text.lower()
+    entities = set()
+
+    # Country names
+    for country in _COUNTRIES:
+        if country in lower:
+            entities.add(country)
+
+    # Year tokens (2024-2030)
+    for year_match in re.findall(r'\b(20[2-3]\d)\b', text):
+        entities.add(year_match)
+
+    # Multi-word proper nouns (consecutive capitalized words)
+    for match in re.findall(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', text):
+        entities.add(match.lower())
+
+    return entities
 
 
 def _normalize_event_name(text: str) -> str:
@@ -100,13 +148,14 @@ def _normalize_event_name(text: str) -> str:
     Normalize event name for matching.
     Strips platform-specific formatting across Kalshi, Polymarket, PredictIt, Manifold.
     """
-    import re
     # PredictIt uses "Market Name -- Contract Name"
     if " -- " in text:
         text = text.split(" -- ")[0]
     # Kalshi uses all-caps tickers mixed in — strip them
     # Manifold uses "[READ DESCRIPTION]" prefixes
     text = re.sub(r'\[.*?\]', '', text)
+    # Strip "Market:" prefixes
+    text = re.sub(r'^market:\s*', '', text, flags=re.IGNORECASE)
     # Strip "Will ... ?" framing common on prediction markets
     text = re.sub(r'^will\s+', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\?+$', '', text)
@@ -115,7 +164,6 @@ def _normalize_event_name(text: str) -> str:
 
 def _tokenize(text: str) -> set[str]:
     """Extract meaningful lowercase tokens from an event name."""
-    import re
     tokens = set(re.findall(r'[a-z0-9]+', text.lower()))
     return tokens - _STOP_WORDS
 
@@ -130,10 +178,10 @@ def _similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Configurable thresholds
+# Configurable thresholds — tightened for accuracy
 # ---------------------------------------------------------------------------
-SIMILARITY_THRESHOLD = 0.40    # Jaccard similarity minimum (lowered for cross-platform)
-MIN_SHARED_TOKENS = 2          # Must share at least 2 meaningful tokens
+SIMILARITY_THRESHOLD = 0.65    # Jaccard similarity minimum (raised from 0.40)
+MIN_SHARED_TOKENS = 3          # Must share at least 3 meaningful tokens (raised from 2)
 MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
 
 
@@ -144,8 +192,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
     Strategy:
     1. Parse all prices, normalize event names
     2. Build an inverted index of tokens -> markets for efficient matching
-    3. For markets sharing 3+ tokens from DIFFERENT sources, check similarity
-    4. If similarity > SIMILARITY_THRESHOLD, treat as same event
+    3. For markets sharing tokens from DIFFERENT sources, check similarity
+    4. Require entity compatibility (same country, year, person)
     5. ONLY report true mathematical arbs (arb_sum < 1.0)
     6. Reject anything above MAX_PROFIT_PCT as a likely matching error
 
@@ -191,6 +239,9 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if len(tokens) < 3:
             continue  # Need at least 3 meaningful tokens
 
+        # Extract entities for strict matching
+        entities = _extract_entities(event_name)
+
         parsed.append({
             "event_name": event_name,
             "normalized_name": normalized,
@@ -200,6 +251,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             "decimal_odds": decimal_odds,
             "category": category,
             "tokens": tokens,
+            "entities": entities,
             "market_url": market_url or "",
             "idx": len(parsed),
         })
@@ -230,7 +282,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if len(candidate_pairs) > 50000:
             break
 
-    # 4. Check each candidate pair for similarity + TRUE arb
+    # 4. Check each candidate pair for similarity + entity match + TRUE arb
     results = []
     seen = set()
 
@@ -246,6 +298,14 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         sim = _similarity(a["tokens"], b["tokens"])
         if sim < SIMILARITY_THRESHOLD:
             continue
+
+        # Entity guard: if both markets have entities, they must share at least one
+        # This prevents "Colombian election" matching "US election"
+        entities_a = a["entities"]
+        entities_b = b["entities"]
+        if entities_a and entities_b:
+            if not (entities_a & entities_b):
+                continue  # Different entities = different events
 
         # Same event, different sources — check for arb
         prob_a = a["implied_prob"]
@@ -270,7 +330,6 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             continue
 
         # Correct arb profit formula: guaranteed ROI on total stake
-        # e.g. arb_sum=0.95 → profit = (1/0.95)-1 = 5.26%
         profit_pct = (1.0 / arb_sum) - 1.0
 
         # Sanity check: reject unrealistically high profits
@@ -284,14 +343,13 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         # Dedup by source pair + normalized event name
         dedup_key = (
             tuple(sorted((a["source"], b["source"]))),
-            min(a["normalized_name"][:50].lower(), b["normalized_name"][:50].lower()),
+            min(a["normalized_name"][:80].lower(), b["normalized_name"][:80].lower()),
         )
         if dedup_key in seen:
             continue
         seen.add(dedup_key)
 
         # Stakes proportional to implied probability so payouts are equal
-        # stake_i = bankroll * (1/odds_i) / arb_sum
         stake_pct1 = (1.0 / odds_yes) / arb_sum
         stake_pct2 = (1.0 / odds_no) / arb_sum
 
@@ -317,7 +375,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         ]
 
         results.append(ArbOpportunityResult(
-            event_name=f"{cheap['normalized_name'][:60]} vs {expensive['source']}",
+            event_name=f"{cheap['normalized_name']} vs {expensive['source']}",
             category=a["category"],
             profit_pct=round(profit_pct, 4),
             legs=legs,

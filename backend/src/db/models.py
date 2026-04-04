@@ -208,6 +208,12 @@ def cleanup_old_data(max_age_hours: int = 6, max_per_source: int = 500):
             Discrepancy.detected_at < arb_cutoff
         ).delete()
 
+        # Trim TrackedMarket table to prevent unbounded growth
+        tracked_cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=24)
+        old_tracked = db.query(TrackedMarket).filter(
+            TrackedMarket.is_active == False,  # noqa: E712
+        ).delete()
+
         db.commit()
 
         # Vacuum to reclaim space

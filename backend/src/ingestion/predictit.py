@@ -15,31 +15,12 @@ import httpx
 import logging
 from datetime import datetime, timezone
 
-from constants import PREDICTIT_API_URL, KEYWORD_MAP
+from constants import PREDICTIT_API_URL
+import constants
 from db.models import SessionLocal, MarketPrice, TrackedMarket, SystemStatus
+from ingestion.categorize import categorise
 
 logger = logging.getLogger(__name__)
-
-
-def _categorise(title: str) -> str:
-    """
-    Map a market title to an ArbitrageIQ category using keyword matching.
-
-    The function lowercases the title and scans every keyword in the
-    project-wide KEYWORD_MAP.  The first match wins; if nothing matches
-    the category defaults to 'other'.
-
-    Args:
-        title: The human-readable market name.
-
-    Returns:
-        One of 'weather', 'economic', 'political', 'sports', or 'other'.
-    """
-    lower = title.lower() if title else ""
-    for keyword, category in KEYWORD_MAP.items():
-        if keyword in lower:
-            return category
-    return "other"
 
 
 class PredictItClient:
@@ -154,6 +135,11 @@ class PredictItClient:
             market_name, contract_name, yes_price, no_price, category,
             timestamp.
         """
+        # Skip if no category selected
+        if constants.ACTIVE_CATEGORY is None:
+            logger.info("PredictIt: no active category — skipping")
+            return []
+
         results: list[dict] = []
 
         try:
@@ -173,7 +159,7 @@ class PredictItClient:
                     "shortName", ""
                 )
                 market_url = market.get("url", "")
-                category = _categorise(market_name)
+                category = categorise(market_name)
 
                 contracts = market.get("contracts", [])
 
@@ -230,6 +216,14 @@ class PredictItClient:
         except Exception as exc:
             logger.error(f"PredictIt fetch failed: {exc}")
             self._update_system_status(error=str(exc))
+            return results
+
+        # Filter to active category only
+        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
+        logger.info(f"PredictIt: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+
+        if not results:
+            self._update_system_status()
             return results
 
         # ------------------------------------------------------------------

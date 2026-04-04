@@ -16,34 +16,15 @@ import httpx
 import logging
 from datetime import datetime, timezone
 
-from constants import KALSHI_API_BASE, KEYWORD_MAP
+from constants import KALSHI_API_BASE
+import constants
 from db.models import SessionLocal, MarketPrice, TrackedMarket, SystemStatus
+from ingestion.categorize import categorise
 
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
-_MAX_PAGES = 10  # Cap pagination to avoid rate limits
-
-
-def _categorise(title: str) -> str:
-    """
-    Map a market title to an ArbitrageIQ category using keyword matching.
-
-    The function lowercases the title and checks every keyword defined in
-    the project-wide KEYWORD_MAP.  The first match wins.  If nothing
-    matches the category defaults to 'other'.
-
-    Args:
-        title: The human-readable market title.
-
-    Returns:
-        One of 'weather', 'economic', 'political', 'sports', or 'other'.
-    """
-    lower = title.lower() if title else ""
-    for keyword, category in KEYWORD_MAP.items():
-        if keyword in lower:
-            return category
-    return "other"
+_MAX_PAGES = 5  # Reduced from 10 to save memory
 
 
 class KalshiClient:
@@ -196,6 +177,11 @@ class KalshiClient:
             A list of dicts with keys: source, market_id, title, yes_price,
             no_price, category, volume, timestamp.
         """
+        # Skip if no category selected
+        if constants.ACTIVE_CATEGORY is None:
+            logger.info("Kalshi: no active category — skipping")
+            return []
+
         results: list[dict] = []
         cursor: str | None = None
         page_count = 0
@@ -227,7 +213,7 @@ class KalshiClient:
                         title = mkt.get("title", "")
                         yes_prob = self._yes_probability(mkt)
                         no_prob = 1.0 - yes_prob
-                        category = _categorise(title)
+                        category = categorise(title)
                         volume = mkt.get("volume", 0)
                         open_interest = mkt.get("open_interest", 0)
 
@@ -259,6 +245,14 @@ class KalshiClient:
         except Exception as exc:
             logger.error(f"Kalshi fetch failed: {exc}")
             self._update_system_status(error=str(exc))
+            return results
+
+        # Filter to active category only
+        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
+        logger.info(f"Kalshi: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+
+        if not results:
+            self._update_system_status()
             return results
 
         # ------------------------------------------------------------------

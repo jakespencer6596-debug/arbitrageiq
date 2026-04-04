@@ -9,8 +9,8 @@ function bookUrl(book, eventName) {
   const q = encodeURIComponent(eventName || '')
 
   // Prediction markets – deep-link to a search for the event
-  if (key === 'polymarket') return `https://polymarket.com/search?query=${q}`
-  if (key === 'kalshi') return `https://kalshi.com/browse?query=${q}`
+  if (key === 'polymarket') return `https://polymarket.com/markets?_q=${q}`
+  if (key === 'kalshi') return `https://kalshi.com/markets`
   if (key === 'predictit') return 'https://www.predictit.org/markets'
   if (key === 'manifold') return `https://manifold.markets/search?q=${q}`
 
@@ -214,7 +214,7 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
 
                 return (
                   <tr
-                    key={opp.id || opp.event_name + opp.detected_at}
+                    key={opp.id || `${opp.event_name}-${opp.profit_pct}-${opp.detected_at}`}
                     onClick={() => onSelectOpportunity(opp)}
                     className={`cursor-pointer transition-colors hover:bg-gray-800/60 group ${
                       freshRow ? 'animate-row-highlight' : ''
@@ -345,12 +345,14 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
 function CategoryBadge({ category }) {
   const cat = (category || 'unknown').toLowerCase()
   const colors = {
-    weather: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    economic: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+    politics: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
     political: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
     sports: 'bg-green-500/10 text-green-400 border-green-500/20',
     crypto: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+    economic: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
     entertainment: 'bg-pink-500/10 text-pink-400 border-pink-500/20',
+    science_tech: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    weather: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
   }
   const cls = colors[cat] || 'bg-gray-500/10 text-gray-400 border-gray-500/20'
   return (

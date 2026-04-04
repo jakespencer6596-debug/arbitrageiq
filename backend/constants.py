@@ -9,11 +9,8 @@ from dotenv import load_dotenv
 load_dotenv('/etc/secrets/.env')
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-# API Keys (fallbacks for Render where env vars may not be configured)
+# API Keys
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "bdc9181d902b5410bd4cff7066945065")
-FRED_API_KEY = os.getenv("FRED_API_KEY", "314ca443ac2c2b529da3bdd3a2c7c91e")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "PENDING")
 
 # URLs
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
@@ -22,10 +19,6 @@ KALSHI_WS_BASE = "wss://api.elections.kalshi.com/trade-api/v2/ws/v2"
 POLYMARKET_API_URL = os.getenv("POLYMARKET_API_URL", "https://gamma-api.polymarket.com")
 PREDICTIT_API_URL = os.getenv("PREDICTIT_API_URL", "https://www.predictit.org/api/marketdata/all/")
 MANIFOLD_API_URL = os.getenv("MANIFOLD_API_URL", "https://api.manifold.markets/v0")
-OPEN_METEO_URL = os.getenv("OPEN_METEO_URL", "https://api.open-meteo.com/v1/forecast")
-OPEN_METEO_HISTORICAL_URL = os.getenv("OPEN_METEO_HISTORICAL_URL", "https://archive-api.open-meteo.com/v1/archive")
-NWS_API_URL = os.getenv("NWS_API_URL", "https://api.weather.gov")
-FRED_BASE = "https://api.stlouisfed.org/fred"
 
 # Rate limiting — tuned for 512 MB Render Starter plan
 BUDGET_MODE = os.getenv("BUDGET_MODE", "true").lower() == "true"
@@ -34,65 +27,95 @@ KALSHI_POLL_SECONDS = 120
 POLYMARKET_POLL_SECONDS = 120
 PREDICTIT_POLL_SECONDS = 180
 MANIFOLD_POLL_SECONDS = 300
-WEATHER_POLL_SECONDS = 900
-ECONOMIC_POLL_SECONDS = 3600
 KEEPALIVE_SECONDS = 540
 
 # DB cleanup — keep only this many recent rows per source to cap memory
-MAX_PRICES_PER_SOURCE = 500
-PRICE_MAX_AGE_HOURS = 6
+MAX_PRICES_PER_SOURCE = 200
+PRICE_MAX_AGE_HOURS = 2
 
-# Discrepancy thresholds
-THRESHOLD_WEATHER = float(os.getenv("DISCREPANCY_THRESHOLD_WEATHER", "0.15"))
-THRESHOLD_ECONOMIC = float(os.getenv("DISCREPANCY_THRESHOLD_ECONOMIC", "0.15"))
-THRESHOLD_POLITICAL = float(os.getenv("DISCREPANCY_THRESHOLD_POLITICAL", "0.10"))
-THRESHOLD_SPORTS = float(os.getenv("DISCREPANCY_THRESHOLD_SPORTS", "0.05"))
-
-THRESHOLDS = {
-    "weather": THRESHOLD_WEATHER,
-    "economic": THRESHOLD_ECONOMIC,
-    "political": THRESHOLD_POLITICAL,
-    "sports": THRESHOLD_SPORTS,
-    "other": 0.10,
-}
-
-ALERT_COOLDOWN_SECONDS = 300
 MIN_ARB_PROFIT_PCT = 0.001  # 0.1% — real cross-bookmaker arbs are small
 
-FRED_SERIES = {
-    "CPIAUCSL":    {"label": "CPI Inflation (YoY %)", "unit": "percent"},
-    "UNRATE":      {"label": "US Unemployment Rate", "unit": "percent"},
-    "FEDFUNDS":    {"label": "Federal Funds Rate", "unit": "percent"},
-    "GDP":         {"label": "US GDP Growth", "unit": "billions"},
-    "DCOILWTICO":  {"label": "WTI Crude Oil Price", "unit": "dollars"},
-    "DEXUSEU":     {"label": "EUR/USD Exchange Rate", "unit": "ratio"},
-    "SP500":       {"label": "S&P 500 Index", "unit": "index"},
-    "MORTGAGE30US":{"label": "30-Year Mortgage Rate", "unit": "percent"},
-    "T10Y2Y":      {"label": "10Y-2Y Treasury Spread", "unit": "percent"},
-    "USREC":       {"label": "US Recession Indicator", "unit": "binary"},
+# ---------------------------------------------------------------------------
+# Category system — user selects one category at a time to save memory
+# ---------------------------------------------------------------------------
+CATEGORIES = ["politics", "sports", "crypto", "entertainment", "science_tech", "weather", "other"]
+
+CATEGORY_DISPLAY = {
+    "politics":     {"name": "Politics",             "description": "Elections, legislation, government, approval ratings"},
+    "sports":       {"name": "Sports",               "description": "NFL, NBA, MLB, NHL, soccer, MMA, Olympics"},
+    "crypto":       {"name": "Crypto & Finance",     "description": "Bitcoin, Ethereum, stocks, inflation, interest rates, GDP"},
+    "entertainment":{"name": "Entertainment",        "description": "Oscars, box office, music, TV, celebrities, pop culture"},
+    "science_tech": {"name": "Science & Tech",       "description": "AI, space, biotech, semiconductors, FDA approvals"},
+    "weather":      {"name": "Weather & Climate",    "description": "Temperature records, hurricanes, storms, forecasts"},
+    "other":        {"name": "Other",                "description": "Everything else — miscellaneous prediction markets"},
 }
 
+# Server-side active category — set via POST /api/category
+ACTIVE_CATEGORY: str | None = None
+
+# Manifold quality filter
+MANIFOLD_MIN_VOLUME = 500
+
 KEYWORD_MAP = {
+    # --- Politics ---
+    "election": "politics", "president": "politics", "senate": "politics",
+    "house": "politics", "congress": "politics", "governor": "politics",
+    "approval rating": "politics", "poll": "politics", "vote": "politics",
+    "democrat": "politics", "republican": "politics", "primary": "politics",
+    "impeach": "politics", "resign": "politics", "legislation": "politics",
+    "supreme court": "politics", "secretary of state": "politics",
+    "speaker": "politics", "cabinet": "politics", "veto": "politics",
+    "pardon": "politics", "indictment": "politics", "electoral": "politics",
+    # --- Sports ---
+    "nfl": "sports", "nba": "sports", "mlb": "sports", "nhl": "sports",
+    "super bowl": "sports", "world series": "sports", "playoffs": "sports",
+    "championship": "sports", "score": "sports", "touchdown": "sports",
+    "point spread": "sports", "mma": "sports", "ufc": "sports",
+    "soccer": "sports", "premier league": "sports", "world cup": "sports",
+    "olympics": "sports", "tennis": "sports", "golf": "sports",
+    "formula 1": "sports", "f1": "sports", "boxing": "sports",
+    "batting": "sports", "rushing": "sports", "mvp": "sports",
+    # --- Crypto & Finance ---
+    "bitcoin": "crypto", "btc": "crypto", "ethereum": "crypto", "eth": "crypto",
+    "crypto": "crypto", "solana": "crypto", "dogecoin": "crypto",
+    "blockchain": "crypto", "defi": "crypto", "nft": "crypto",
+    "binance": "crypto", "coinbase": "crypto", "altcoin": "crypto",
+    "token": "crypto", "web3": "crypto", "stablecoin": "crypto",
+    "cpi": "crypto", "inflation": "crypto", "unemployment": "crypto",
+    "fed rate": "crypto", "federal reserve": "crypto", "fomc": "crypto",
+    "interest rate": "crypto", "rate hike": "crypto", "rate cut": "crypto",
+    "gdp": "crypto", "recession": "crypto", "oil": "crypto",
+    "crude": "crypto", "wti": "crypto", "brent": "crypto",
+    "s&p": "crypto", "nasdaq": "crypto", "dow": "crypto",
+    "mortgage": "crypto", "treasury": "crypto", "yield": "crypto",
+    "jobs report": "crypto", "nonfarm": "crypto", "payroll": "crypto",
+    "stock market": "crypto", "tariff": "crypto",
+    # --- Entertainment ---
+    "oscar": "entertainment", "academy award": "entertainment",
+    "box office": "entertainment", "movie": "entertainment", "film": "entertainment",
+    "grammy": "entertainment", "emmy": "entertainment", "celebrity": "entertainment",
+    "hollywood": "entertainment", "tv show": "entertainment", "series": "entertainment",
+    "album": "entertainment", "billboard": "entertainment", "streaming": "entertainment",
+    "netflix": "entertainment", "disney": "entertainment", "hbo": "entertainment",
+    "spotify": "entertainment", "golden globe": "entertainment",
+    "bafta": "entertainment", "cannes": "entertainment", "reality": "entertainment",
+    "tony award": "entertainment", "concert": "entertainment",
+    "record of the year": "entertainment", "best picture": "entertainment",
+    # --- Science & Tech ---
+    "ai": "science_tech", "artificial intelligence": "science_tech",
+    "spacex": "science_tech", "nasa": "science_tech", "mars": "science_tech",
+    "moon": "science_tech", "launch": "science_tech", "quantum": "science_tech",
+    "semiconductor": "science_tech", "openai": "science_tech",
+    "fda": "science_tech", "drug approval": "science_tech",
+    "vaccine": "science_tech", "patent": "science_tech",
+    "agi": "science_tech", "gpt": "science_tech", "robot": "science_tech",
+    "self-driving": "science_tech", "fusion": "science_tech",
+    "crispr": "science_tech", "gene": "science_tech",
+    # --- Weather ---
     "temperature": "weather", "high temp": "weather", "low temp": "weather",
     "rainfall": "weather", "precipitation": "weather", "snow": "weather",
     "hurricane": "weather", "tornado": "weather", "storm": "weather",
     "weather": "weather", "degrees": "weather", "fahrenheit": "weather",
     "celsius": "weather", "heat": "weather", "frost": "weather",
-    "cpi": "economic", "inflation": "economic", "unemployment": "economic",
-    "fed rate": "economic", "federal reserve": "economic", "fomc": "economic",
-    "interest rate": "economic", "rate hike": "economic", "rate cut": "economic",
-    "gdp": "economic", "recession": "economic", "oil": "economic",
-    "crude": "economic", "wti": "economic", "brent": "economic",
-    "s&p": "economic", "nasdaq": "economic", "dow": "economic",
-    "mortgage": "economic", "treasury": "economic", "yield": "economic",
-    "jobs report": "economic", "nonfarm": "economic", "payroll": "economic",
-    "election": "political", "president": "political", "senate": "political",
-    "house": "political", "congress": "political", "governor": "political",
-    "approval rating": "political", "poll": "political", "vote": "political",
-    "democrat": "political", "republican": "political", "primary": "political",
-    "impeach": "political", "resign": "political",
-    "nfl": "sports", "nba": "sports", "mlb": "sports", "nhl": "sports",
-    "super bowl": "sports", "world series": "sports", "playoffs": "sports",
-    "championship": "sports", "win": "sports", "score": "sports",
-    "touchdown": "sports", "point spread": "sports",
+    "drought": "weather", "flood": "weather", "wildfire": "weather",
 }

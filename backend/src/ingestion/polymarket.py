@@ -16,34 +16,15 @@ import httpx
 import logging
 from datetime import datetime, timezone
 
-from constants import POLYMARKET_API_URL, KEYWORD_MAP
+from constants import POLYMARKET_API_URL, ACTIVE_CATEGORY
+import constants
 from db.models import SessionLocal, MarketPrice, TrackedMarket, SystemStatus
+from ingestion.categorize import categorise
 
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
-_MAX_PAGES = 5  # Cap pagination to avoid OOM on free tier
-
-
-def _categorise(title: str) -> str:
-    """
-    Map a market title to an ArbitrageIQ category using keyword matching.
-
-    The function lowercases the title and checks every keyword defined in
-    the project-wide KEYWORD_MAP.  The first match wins.  If nothing
-    matches the category defaults to 'other'.
-
-    Args:
-        title: The human-readable market question.
-
-    Returns:
-        One of 'weather', 'economic', 'political', 'sports', or 'other'.
-    """
-    lower = title.lower() if title else ""
-    for keyword, category in KEYWORD_MAP.items():
-        if keyword in lower:
-            return category
-    return "other"
+_MAX_PAGES = 3  # Cap pagination to avoid OOM on free tier
 
 
 def _parse_json_string(value) -> list:
@@ -166,24 +147,14 @@ class PolymarketClient:
 
     async def fetch(self) -> list[dict]:
         """
-        Paginate through all open Polymarket markets and return normalised rows.
-
-        The endpoint returns up to 100 markets per page.  The method
-        increments ``offset`` by 100 until a page returns fewer than 100
-        results or an empty list.
-
-        For each market:
-            1. ``outcomePrices`` is a **JSON-encoded string** like
-               ``'["0.45","0.55"]'`` -- it must be parsed with
-               ``json.loads()``.
-            2. ``outcomes`` is similarly encoded (e.g. ``'["Yes","No"]'``).
-            3. Each (outcome, price) pair is written as a MarketPrice row.
-            4. New markets are auto-tracked via TrackedMarket upsert.
-
-        Returns:
-            A list of dicts with keys: source, market_id, title, outcome,
-            price, category, volume, timestamp.
+        Paginate through open Polymarket markets, filter by active category,
+        and return normalised rows.
         """
+        # Skip if no category selected
+        if constants.ACTIVE_CATEGORY is None:
+            logger.info("Polymarket: no active category — skipping")
+            return []
+
         results: list[dict] = []
         offset = 0
         page_count = 0
@@ -219,7 +190,7 @@ class PolymarketClient:
                         slug = mkt.get("slug", "")
                         market_id = str(condition_id) if condition_id else slug
                         volume = mkt.get("volume", 0)
-                        category = _categorise(question)
+                        category = categorise(question)
 
                         # -------------------------------------------------
                         # CRITICAL: outcomePrices is a JSON-encoded STRING
@@ -288,6 +259,14 @@ class PolymarketClient:
         except Exception as exc:
             logger.error(f"Polymarket fetch failed: {exc}")
             self._update_system_status(error=str(exc))
+            return results
+
+        # Filter to active category only
+        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
+        logger.info(f"Polymarket: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+
+        if not results:
+            self._update_system_status()
             return results
 
         # ------------------------------------------------------------------

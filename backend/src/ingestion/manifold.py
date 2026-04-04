@@ -15,34 +15,15 @@ import httpx
 import logging
 from datetime import datetime, timezone
 
-from constants import MANIFOLD_API_URL, KEYWORD_MAP
+from constants import MANIFOLD_API_URL, MANIFOLD_MIN_VOLUME
+import constants
 from db.models import SessionLocal, MarketPrice, TrackedMarket, SystemStatus
+from ingestion.categorize import categorise
 
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
 _MAX_PAGES = 3  # Cap pagination to 300 markets to avoid OOM on free tier
-
-
-def _categorise(title: str) -> str:
-    """
-    Map a market title to an ArbitrageIQ category using keyword matching.
-
-    The function lowercases the title and checks every keyword defined in
-    the project-wide KEYWORD_MAP.  The first match wins.  If nothing
-    matches the category defaults to 'other'.
-
-    Args:
-        title: The human-readable market question.
-
-    Returns:
-        One of 'weather', 'economic', 'political', 'sports', or 'other'.
-    """
-    lower = title.lower() if title else ""
-    for keyword, category in KEYWORD_MAP.items():
-        if keyword in lower:
-            return category
-    return "other"
 
 
 class ManifoldClient:
@@ -139,22 +120,14 @@ class ManifoldClient:
 
     async def fetch(self) -> list[dict]:
         """
-        Paginate through open Manifold Markets and return normalised rows.
-
-        The search endpoint returns up to 100 markets per page.  The method
-        uses the ``offset`` parameter to paginate up to _MAX_PAGES pages.
-
-        For each market:
-            1. Only unresolved binary markets with probability between
-               0.01 and 0.99 are included.
-            2. A single MarketPrice row is written with outcome="yes".
-            3. New markets are auto-tracked via TrackedMarket upsert.
-            4. raw_payload is set to None to save memory.
-
-        Returns:
-            A list of dicts with keys: source, market_id, title, outcome,
-            price, category, volume, timestamp, yes_price, no_price, url.
+        Paginate through open Manifold Markets, filter by active category
+        and quality thresholds, and return normalised rows.
         """
+        # Skip if no category selected
+        if constants.ACTIVE_CATEGORY is None:
+            logger.info("Manifold: no active category — skipping")
+            return []
+
         results: list[dict] = []
         offset = 0
         page_count = 0
@@ -200,15 +173,19 @@ class ManifoldClient:
                         if probability < 0.01 or probability > 0.99:
                             continue
 
+                        # Quality filter: skip low-volume user-created markets
+                        volume = mkt.get("volume", 0) or 0
+                        if volume < MANIFOLD_MIN_VOLUME:
+                            continue
+
                         market_id = str(mkt.get("id", ""))
                         if not market_id:
                             continue
 
                         question = mkt.get("question", "")
                         url = mkt.get("url", "")
-                        volume = mkt.get("volume", 0)
                         resolution = mkt.get("resolution")
-                        category = _categorise(question)
+                        category = categorise(question)
 
                         yes_price = probability
                         no_price = round(1.0 - probability, 6)
@@ -245,6 +222,14 @@ class ManifoldClient:
         except Exception as exc:
             logger.error(f"Manifold Markets fetch failed: {exc}")
             self._update_system_status(error=str(exc))
+            return results
+
+        # Filter to active category only
+        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
+        logger.info(f"Manifold: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+
+        if not results:
+            self._update_system_status()
             return results
 
         # ------------------------------------------------------------------

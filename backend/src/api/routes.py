@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import func
 
+import constants
 from db.models import (
     ArbOpportunity,
     AlertLog,
@@ -93,6 +94,81 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
         except Exception:
             continue
     return d
+
+
+# ---------------------------------------------------------------------------
+# Category system
+# ---------------------------------------------------------------------------
+
+async def _trigger_fetch_cycle():
+    """Fire all ingestion jobs for the active category, then run arb detection."""
+    import asyncio
+    from scheduler import fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds, run_arb
+
+    jobs = [fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds]
+    for job in jobs:
+        try:
+            await job()
+        except Exception as exc:
+            logger.error(f"_trigger_fetch_cycle: {job.__name__} failed: {exc}")
+        await asyncio.sleep(1)  # Small delay between jobs to avoid memory spikes
+
+    # Run arb detection on the freshly fetched data
+    try:
+        await run_arb()
+    except Exception as exc:
+        logger.error(f"_trigger_fetch_cycle: run_arb failed: {exc}")
+
+
+@router.get("/categories")
+async def get_categories():
+    """Return available categories with display info."""
+    return {
+        "categories": [
+            {"key": k, **v}
+            for k, v in constants.CATEGORY_DISPLAY.items()
+        ],
+        "active_category": constants.ACTIVE_CATEGORY,
+    }
+
+
+@router.get("/category")
+async def get_category():
+    """Return the currently active category."""
+    return {"active_category": constants.ACTIVE_CATEGORY}
+
+
+@router.post("/category")
+async def set_category(body: dict):
+    """Set the active category. Pass {"category": "politics"} or {"category": null} to clear."""
+    import asyncio
+
+    category = body.get("category")
+    if category and category not in constants.CATEGORIES:
+        return {"error": f"Invalid category. Valid: {constants.CATEGORIES}"}
+
+    # 1. Set the active category
+    constants.ACTIVE_CATEGORY = category
+
+    # 2. Deactivate all existing prices and arbs (clean slate for new category)
+    db = SessionLocal()
+    try:
+        db.query(MarketPrice).filter(MarketPrice.is_active == True).update({"is_active": False})  # noqa: E712
+        db.query(ArbOpportunity).filter(ArbOpportunity.is_active == True).update({"is_active": False})  # noqa: E712
+        db.commit()
+    finally:
+        db.close()
+
+    # 3. Clear the snapshot cache
+    global _snapshot_cache, _snapshot_ts
+    _snapshot_cache = {}
+    _snapshot_ts = 0
+
+    # 4. Trigger immediate fetch cycle in the background
+    if category:
+        asyncio.create_task(_trigger_fetch_cycle())
+
+    return {"active_category": category, "status": "ok"}
 
 
 # ---------------------------------------------------------------------------
