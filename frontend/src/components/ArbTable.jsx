@@ -220,7 +220,9 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                 const freshRow = isNew(opp.detected_at)
                 const isPlayMoney = opp.arb_type === 'play_money'
                 const isOverround = opp.arb_type === 'overround'
+                const isValueBet = opp.arb_type === 'value_bet'
                 const feeDiff = grossPct - netPct
+                const edge = opp.edge ? Math.abs(opp.edge * 100) : null
                 const confidence = opp.confidence || 'low'
                 const freshness = opp.freshness_seconds ?? 0
                 const isStale = freshness > 120
@@ -268,6 +270,11 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                     {/* Event */}
                     <td className="px-6 py-3.5">
                       <div className="flex items-start gap-1.5">
+                        {isValueBet && (
+                          <span className="shrink-0 text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-medium mt-0.5">
+                            {opp.direction || 'VALUE'} {edge ? `${edge.toFixed(0)}% edge` : ''}
+                          </span>
+                        )}
                         {isOverround && (
                           <span className="shrink-0 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-1.5 py-0.5 rounded font-medium mt-0.5">
                             OVERROUND

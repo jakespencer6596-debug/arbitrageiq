@@ -151,17 +151,9 @@ async def fetch_polymarket() -> None:
 
 
 async def fetch_predictit() -> None:
-    """Fetch latest PredictIt prediction-market data."""
-    try:
-        from ingestion.predictit import PredictItClient
-
-        client = PredictItClient()
-        results = await client.fetch()
-        logger.info(f"fetch_predictit: ingested {len(results)} price snapshots")
-    except ImportError:
-        logger.warning("fetch_predictit: ingestion.predictit not available — skipping")
-    except Exception as exc:
-        logger.error(f"fetch_predictit failed: {exc}", exc_info=True)
+    """PredictIt disabled — 15% fees make arbs unprofitable, CFTC license revoked."""
+    logger.debug("fetch_predictit: disabled (fees too high, platform winding down)")
+    return
 
 
 async def fetch_manifold() -> None:
@@ -176,6 +168,20 @@ async def fetch_manifold() -> None:
         logger.warning("fetch_manifold: ingestion.manifold not available — skipping")
     except Exception as exc:
         logger.error(f"fetch_manifold failed: {exc}", exc_info=True)
+
+
+async def fetch_metaforecast() -> None:
+    """Fetch cross-platform prediction data from Metaforecast aggregator."""
+    try:
+        from ingestion.metaforecast import MetaforecastClient
+
+        client = MetaforecastClient()
+        results = await client.fetch()
+        logger.info(f"fetch_metaforecast: ingested {len(results)} cross-platform prices")
+    except ImportError:
+        logger.warning("fetch_metaforecast: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_metaforecast failed: {exc}", exc_info=True)
 
 
 async def fetch_weather() -> None:
@@ -284,23 +290,55 @@ async def run_arb() -> None:
         overround_arbs = detect_overround(price_dicts)
         opportunities = cross_arbs + overround_arbs
 
-        if not opportunities:
-            logger.debug("run_arb: no arbitrage opportunities detected")
+        # Also detect value bets (mispriced markets vs consensus)
+        value_bets = []
+        try:
+            from engines.value_engine import detect_value_bets
+            value_bets = detect_value_bets(price_dicts)
+            if value_bets:
+                logger.info(f"run_arb: detected {len(value_bets)} value bets")
+        except ImportError:
+            logger.debug("run_arb: value_engine not available")
+        except Exception as exc:
+            logger.error(f"run_arb: value bet detection failed: {exc}")
+
+        all_count = len(opportunities) + len(value_bets)
+        if all_count == 0:
+            logger.debug("run_arb: no opportunities detected")
             return
 
-        logger.info(f"run_arb: detected {len(cross_arbs)} cross-platform + {len(overround_arbs)} overround arbs")
+        logger.info(f"run_arb: {len(cross_arbs)} cross-platform + {len(overround_arbs)} overround + {len(value_bets)} value bets")
 
-        # 3. Persist to DB — store full arb data in legs JSON field
+        # 3. Persist to DB — store full data in legs JSON field
         saved_count = 0
+
+        # Save arb opportunities
         for opp in opportunities:
             d = opp.to_dict() if hasattr(opp, 'to_dict') else opp
             row = ArbOpportunity(
                 event_name=d.get("event_name", "Unknown"),
                 category=d.get("category", "sports"),
                 profit_pct=d.get("net_profit_pct", d.get("profit_pct", 0)),
-                legs=d,  # Store FULL arb dict (not just legs array)
+                legs=d,
                 total_stake_base=1000.0,
                 profit_on_base=d.get("net_profit_on_1000", d.get("profit_on_1000")),
+                is_active=True,
+            )
+            db.add(row)
+            saved_count += 1
+
+        # Save value bets (stored as arb opportunities with arb_type="value_bet")
+        for vb in value_bets:
+            d = vb.to_dict() if hasattr(vb, 'to_dict') else vb
+            d["arb_type"] = "value_bet"
+            d["legs"] = []  # Value bets have sources, not legs
+            row = ArbOpportunity(
+                event_name=d.get("event_name", "Unknown"),
+                category=d.get("category", "other"),
+                profit_pct=abs(d.get("edge", 0)),
+                legs=d,
+                total_stake_base=1000.0,
+                profit_on_base=abs(d.get("edge", 0)) * 1000,
                 is_active=True,
             )
             db.add(row)
@@ -746,6 +784,16 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         next_run_time=_now + timedelta(seconds=170),
+    )
+    _scheduler.add_job(
+        fetch_metaforecast,
+        "interval",
+        seconds=300,
+        id="fetch_metaforecast",
+        name="Metaforecast aggregator",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=60),
     )
     # --- Detection job (run after first data arrives) ---
     _scheduler.add_job(

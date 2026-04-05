@@ -92,11 +92,10 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
         except Exception:
             continue
 
-    # ArbOpportunity: legs field may contain full arb dict (v3 format)
+    # ArbOpportunity: legs field may contain full arb/value_bet dict (v3 format)
     # Flatten it so frontend gets all fields at the top level
     legs_data = d.get("legs")
     if isinstance(legs_data, dict) and "event_name" in legs_data:
-        # v3 format: legs contains full arb data
         full = legs_data
         d["legs"] = full.get("legs", [])
         d["net_profit_pct"] = full.get("net_profit_pct", 0)
@@ -106,6 +105,15 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
         d["freshness_seconds"] = full.get("freshness_seconds", 0)
         d["annualized_roi"] = full.get("annualized_roi")
         d["end_date"] = full.get("end_date", "")
+        # Value bet specific fields
+        d["platform"] = full.get("platform", "")
+        d["platform_price"] = full.get("platform_price")
+        d["consensus_price"] = full.get("consensus_price")
+        d["edge"] = full.get("edge")
+        d["direction"] = full.get("direction", "")
+        d["num_sources"] = full.get("num_sources", 0)
+        d["sources"] = full.get("sources", [])
+        d["fees"] = full.get("fees", {})
 
     return d
 
@@ -117,9 +125,9 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
 async def _trigger_fetch_cycle():
     """Fire all ingestion jobs for the active category, then run arb detection."""
     import asyncio
-    from scheduler import fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds, run_arb
+    from scheduler import fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds, fetch_metaforecast, run_arb
 
-    jobs = [fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds]
+    jobs = [fetch_polymarket, fetch_kalshi, fetch_manifold, fetch_metaforecast, fetch_odds]
     for job in jobs:
         try:
             await job()

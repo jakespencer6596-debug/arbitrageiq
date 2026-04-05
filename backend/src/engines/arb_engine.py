@@ -297,6 +297,10 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if implied_prob <= 0.01 or implied_prob >= 0.99:
             continue  # Skip extreme prices (noise)
 
+        # Skip PredictIt — 15% combined fees make arbs unprofitable
+        if source.lower().strip() == "predictit":
+            continue
+
         if raw_odds and raw_odds > 0:
             decimal_odds = raw_odds
         elif implied_prob > 0:
