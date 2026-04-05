@@ -149,8 +149,8 @@ def _normalize_event_name(text: str) -> str:
     Strips platform-specific formatting across Kalshi, Polymarket, PredictIt, Manifold.
     """
     # PredictIt uses "Market Name -- Contract Name"
-    if " -- " in text:
-        text = text.split(" -- ")[0]
+    # Keep both parts for matching (contract name has the candidate/outcome)
+    text = text.replace(" -- ", " ")
     # Kalshi uses all-caps tickers mixed in — strip them
     # Manifold uses "[READ DESCRIPTION]" prefixes
     text = re.sub(r'\[.*?\]', '', text)
@@ -180,7 +180,7 @@ def _similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
 # ---------------------------------------------------------------------------
 # Configurable thresholds — tightened for accuracy
 # ---------------------------------------------------------------------------
-SIMILARITY_THRESHOLD = 0.65    # Jaccard similarity minimum (raised from 0.40)
+SIMILARITY_THRESHOLD = 0.55    # Jaccard similarity minimum (balanced: catches real matches, entity check blocks false positives)
 MIN_SHARED_TOKENS = 3          # Must share at least 3 meaningful tokens (raised from 2)
 MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
 
