@@ -307,12 +307,10 @@ async def run_arb() -> None:
             logger.debug("run_arb: no opportunities detected")
             return
 
-        logger.info(f"run_arb: {len(cross_arbs)} cross-platform + {len(overround_arbs)} overround + {len(value_bets)} value bets")
+        logger.info(f"run_arb: {len(cross_arbs)} cross-platform + {len(overround_arbs)} overround arbs | {len(value_bets)} discrepancies")
 
-        # 3. Persist to DB — store full data in legs JSON field
+        # 3. Persist ARBS to ArbOpportunity table (guaranteed profit only)
         saved_count = 0
-
-        # Save arb opportunities
         for opp in opportunities:
             d = opp.to_dict() if hasattr(opp, 'to_dict') else opp
             row = ArbOpportunity(
@@ -327,25 +325,35 @@ async def run_arb() -> None:
             db.add(row)
             saved_count += 1
 
-        # Save value bets (stored as arb opportunities with arb_type="value_bet")
+        # 4. Persist VALUE BETS to Discrepancy table (intelligence signals)
+        # Clear old discrepancies first
+        db.query(Discrepancy).filter(Discrepancy.is_active == True).update({"is_active": False})  # noqa: E712
+        disc_count = 0
         for vb in value_bets:
             d = vb.to_dict() if hasattr(vb, 'to_dict') else vb
-            d["arb_type"] = "value_bet"
-            d["legs"] = []  # Value bets have sources, not legs
-            row = ArbOpportunity(
+            row = Discrepancy(
+                market_id=d.get("market_url", ""),
+                source=d.get("platform", ""),
                 event_name=d.get("event_name", "Unknown"),
                 category=d.get("category", "other"),
-                profit_pct=abs(d.get("edge", 0)),
-                legs=d,
-                total_stake_base=1000.0,
-                profit_on_base=abs(d.get("edge", 0)) * 1000,
+                market_probability=d.get("platform_price", 0),
+                data_implied_probability=d.get("consensus_price", 0),
+                edge_pct=abs(d.get("edge", 0)),
+                direction=d.get("direction", ""),
+                data_source="consensus",
+                data_value=d.get("consensus_price", 0),
+                data_unit="probability",
+                confidence=d.get("confidence", "medium"),
                 is_active=True,
+                notes=f"{d.get('num_sources', 0)} sources | " + ", ".join(
+                    f"{s.get('source', '?')}: {s.get('prob', 0):.0%}" for s in d.get("sources", [])[:5]
+                ),
             )
             db.add(row)
-            saved_count += 1
+            disc_count += 1
 
         db.commit()
-        logger.info(f"run_arb: saved {saved_count} opportunities to DB")
+        logger.info(f"run_arb: saved {saved_count} arbs + {disc_count} discrepancies to DB")
 
         # 4. Broadcast via WebSocket
         try:

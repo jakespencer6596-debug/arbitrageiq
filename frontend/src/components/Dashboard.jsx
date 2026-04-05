@@ -40,6 +40,7 @@ export default function Dashboard({
   onSelectOpportunity,
 }) {
   const activeArbs = stats?.active_arbs ?? opportunities?.length ?? 0
+  const activeDiscs = stats?.active_discrepancies ?? discrepancies?.length ?? 0
   const isConnected = apiConnected || wsConnected
   const isLoading = stats === null
   const catInfo = CATEGORY_LABELS[activeCategory] || { name: activeCategory, color: 'gray' }
@@ -72,7 +73,8 @@ export default function Dashboard({
 
           {/* Centre stats badges */}
           <div className="hidden md:flex items-center gap-3">
-            <StatBadge label="Active Arbs" value={activeArbs} color="green" />
+            <StatBadge label="Arbs" value={activeArbs} color="green" />
+            <StatBadge label="Signals" value={activeDiscs} color="blue" />
           </div>
 
           {/* Right side */}
@@ -129,7 +131,7 @@ export default function Dashboard({
 
           {/* Right - Discrepancy Feed (1/3) */}
           <div className="lg:col-span-1">
-            <DiscrepancyFeed />
+            <DiscrepancyFeed discrepancies={discrepancies} stats={stats} />
           </div>
         </div>
 

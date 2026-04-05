@@ -82,6 +82,7 @@ export default function App() {
       if (opps.status === 'fulfilled') {
         const data = opps.value || {}
         setOpportunities(data.arb || [])
+        setDiscrepancies(data.discrepancies || [])
         anySuccess = true
       }
       if (statsData.status === 'fulfilled') { setStats(statsData.value); anySuccess = true }
