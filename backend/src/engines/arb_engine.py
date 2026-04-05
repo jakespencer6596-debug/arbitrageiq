@@ -644,12 +644,22 @@ def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[Ar
                     fees=fee_info,
                 ))
 
-            # Net profit after fees
+            # Net profit after fees — compute per-leg for overrounds
+            # Each leg is a separate contract with its own fees
             gross = base_stake * profit_pct
-            net = _compute_net_profit(gross, base_stake, source)
+            fees = _get_fee_info(source)
+            total_fees = 0
+            for leg in legs:
+                leg_stake = leg.stake_dollars
+                leg_profit = leg_stake * (leg.decimal_odds - 1) if leg.decimal_odds > 1 else 0
+                trade_cost = leg_stake * fees.get("trade_fee", 0)
+                profit_fee = leg_profit * fees.get("profit_fee", 0) if leg_profit > 0 else 0
+                wd_fee = (leg_stake + leg_profit) * fees.get("withdrawal_fee", 0)
+                total_fees += trade_cost + profit_fee + wd_fee
+            net = gross - total_fees
             net_pct = net / base_stake if base_stake > 0 else 0
 
-            if net_pct > 0.001:
+            if net_pct > 0.005:  # 0.5% minimum to be worth the effort
                 results.append(ArbOpportunityResult(
                     event_name=f"[Overround] {market_name} ({source})",
                     category=category,
