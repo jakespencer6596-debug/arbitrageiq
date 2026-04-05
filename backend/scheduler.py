@@ -54,12 +54,8 @@ def _build_market_url(source: str, market_id: str, event_name: str,
     q = event_name or ""
 
     if src == "polymarket":
-        # metadata_ may contain slug from ingestion
-        if metadata_ and isinstance(metadata_, dict):
-            slug = metadata_.get("slug", "")
-            if slug:
-                return f"https://polymarket.com/event/{slug}"
-        # Fall back to search
+        # Polymarket slugs from the API are market-level, not event-level,
+        # so /event/{slug} often 404s. Use search instead for reliability.
         from urllib.parse import quote
         return f"https://polymarket.com/markets?_q={quote(q[:80])}"
 
