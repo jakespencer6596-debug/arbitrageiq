@@ -290,17 +290,17 @@ async def run_arb() -> None:
 
         logger.info(f"run_arb: detected {len(cross_arbs)} cross-platform + {len(overround_arbs)} overround arbs")
 
-        # 3. Persist to DB
+        # 3. Persist to DB — store full arb data in legs JSON field
         saved_count = 0
         for opp in opportunities:
             d = opp.to_dict() if hasattr(opp, 'to_dict') else opp
             row = ArbOpportunity(
                 event_name=d.get("event_name", "Unknown"),
                 category=d.get("category", "sports"),
-                profit_pct=d.get("profit_pct", d.get("profit_pct", 0)),
-                legs=d.get("legs", []),
+                profit_pct=d.get("net_profit_pct", d.get("profit_pct", 0)),
+                legs=d,  # Store FULL arb dict (not just legs array)
                 total_stake_base=1000.0,
-                profit_on_base=d.get("profit_on_1000", d.get("profit_on_base")),
+                profit_on_base=d.get("net_profit_on_1000", d.get("profit_on_1000")),
                 is_active=True,
             )
             db.add(row)

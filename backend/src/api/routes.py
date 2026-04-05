@@ -81,11 +81,9 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
     """Convert a SQLAlchemy model instance to a plain dict."""
     d: dict[str, Any] = {}
     for col in obj.__table__.columns:
-        # Use the Python attribute name, falling back to column name
         attr_name = col.key
         try:
             val = getattr(obj, attr_name, None)
-            # Skip SQLAlchemy internal MetaData objects
             if hasattr(val, 'tables'):
                 continue
             if isinstance(val, datetime):
@@ -93,6 +91,22 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
             d[col.name] = val
         except Exception:
             continue
+
+    # ArbOpportunity: legs field may contain full arb dict (v3 format)
+    # Flatten it so frontend gets all fields at the top level
+    legs_data = d.get("legs")
+    if isinstance(legs_data, dict) and "event_name" in legs_data:
+        # v3 format: legs contains full arb data
+        full = legs_data
+        d["legs"] = full.get("legs", [])
+        d["net_profit_pct"] = full.get("net_profit_pct", 0)
+        d["net_profit_on_1000"] = full.get("net_profit_on_1000", 0)
+        d["arb_type"] = full.get("arb_type", "cross_platform")
+        d["confidence"] = full.get("confidence", "medium")
+        d["freshness_seconds"] = full.get("freshness_seconds", 0)
+        d["annualized_roi"] = full.get("annualized_roi")
+        d["end_date"] = full.get("end_date", "")
+
     return d
 
 

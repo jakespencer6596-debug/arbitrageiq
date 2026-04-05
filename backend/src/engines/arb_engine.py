@@ -582,6 +582,11 @@ def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[Ar
         if not market_id or not implied_prob or implied_prob <= 0:
             continue
 
+        # Only detect overrounds on multi-candidate platforms
+        # Skip Polymarket/Manifold (binary YES/NO markets, not multi-candidate)
+        if source in ("polymarket", "manifold"):
+            continue
+
         # Extract the parent market ID (before "_" for PredictIt)
         if source == "predictit" and "_" in market_id:
             parent_id = market_id.split("_")[0]
@@ -608,7 +613,9 @@ def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[Ar
         total_prob = sum(c["implied_prob"] for c in contracts)
 
         # If total > 1.0, selling all contracts gives guaranteed profit
-        if total_prob > 1.02:  # 2% minimum to be meaningful after fees
+        # PredictIt has 15% fees, so need higher overround to be profitable
+        min_overround = 1.20 if contracts[0]["source"] == "predictit" else 1.05
+        if total_prob > min_overround:
             overround = total_prob - 1.0
             profit_pct = overround / total_prob  # ROI on total capital needed
 
