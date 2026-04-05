@@ -210,11 +210,29 @@ def _similarity(tokens_a: set[str], tokens_b: set[str]) -> float:
     return len(intersection) / len(union)
 
 
+def _fuzzy_similarity(name_a: str, name_b: str) -> float:
+    """
+    Compute similarity using rapidfuzz token_sort_ratio.
+    Returns 0.0-1.0 scale. Handles word reordering and partial matches
+    much better than Jaccard for prediction market event names.
+    """
+    try:
+        from rapidfuzz import fuzz
+        # token_sort_ratio sorts tokens alphabetically before comparing,
+        # so "Trump wins 2028 election" matches "2028 election Trump wins"
+        score = fuzz.token_sort_ratio(name_a.lower(), name_b.lower())
+        return score / 100.0  # rapidfuzz returns 0-100, normalize to 0-1
+    except ImportError:
+        # Fallback to Jaccard if rapidfuzz not available
+        return _similarity(_tokenize(name_a), _tokenize(name_b))
+
+
 # ---------------------------------------------------------------------------
-# Configurable thresholds — tightened for accuracy
+# Configurable thresholds
 # ---------------------------------------------------------------------------
-SIMILARITY_THRESHOLD = 0.55    # Jaccard similarity minimum (balanced: catches real matches, entity check blocks false positives)
-MIN_SHARED_TOKENS = 3          # Must share at least 3 meaningful tokens (raised from 2)
+SIMILARITY_THRESHOLD = 0.55    # Jaccard minimum (coarse filter)
+FUZZY_THRESHOLD = 60           # rapidfuzz token_sort_ratio minimum (0-100 scale)
+MIN_SHARED_TOKENS = 3          # Must share at least 3 meaningful tokens
 MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
 
 
@@ -329,13 +347,19 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         a = parsed[idx_a]
         b = parsed[idx_b]
 
-        # Require minimum shared token count
+        # Require minimum shared token count (coarse filter)
         shared = a["tokens"] & b["tokens"]
         if len(shared) < MIN_SHARED_TOKENS:
             continue
 
-        sim = _similarity(a["tokens"], b["tokens"])
-        if sim < SIMILARITY_THRESHOLD:
+        # Two-phase matching: coarse Jaccard + fine rapidfuzz
+        jaccard = _similarity(a["tokens"], b["tokens"])
+        if jaccard < SIMILARITY_THRESHOLD:
+            continue
+
+        # Fine matching with rapidfuzz (handles word reordering, partial matches)
+        fuzzy = _fuzzy_similarity(a["normalized_name"], b["normalized_name"])
+        if fuzzy < FUZZY_THRESHOLD / 100.0:
             continue
 
         # Entity guard: if both markets have entities, they must share at least one
