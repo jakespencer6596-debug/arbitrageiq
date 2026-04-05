@@ -68,11 +68,18 @@ function isNew(dateStr) {
 }
 
 const SORT_KEYS = {
-  profit_pct: (a, b) => (b.profit_pct ?? 0) - (a.profit_pct ?? 0),
+  profit_pct: (a, b) => (b.net_profit_pct ?? b.profit_pct ?? 0) - (a.net_profit_pct ?? a.profit_pct ?? 0),
   event_name: (a, b) => (a.event_name || '').localeCompare(b.event_name || ''),
   category: (a, b) => (a.category || '').localeCompare(b.category || ''),
-  profit_1k: (a, b) => (b.profit_pct ?? 0) - (a.profit_pct ?? 0),
+  profit_1k: (a, b) => (b.net_profit_on_1000 ?? 0) - (a.net_profit_on_1000 ?? 0),
+  annualized: (a, b) => (b.annualized_roi ?? -1) - (a.annualized_roi ?? -1),
   detected_at: (a, b) => new Date(b.detected_at || 0) - new Date(a.detected_at || 0),
+}
+
+const CONFIDENCE_COLORS = {
+  high: 'bg-green-500',
+  medium: 'bg-yellow-500',
+  low: 'bg-gray-500',
 }
 
 const ROWS_PER_PAGE = 25
@@ -197,9 +204,9 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                 </th>
                 <th
                   className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
-                  onClick={() => handleSort('detected_at')}
+                  onClick={() => handleSort('annualized')}
                 >
-                  Time <SortIcon column="detected_at" />
+                  Ann. ROI <SortIcon column="annualized" />
                 </th>
               </tr>
             </thead>
@@ -214,6 +221,11 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                 const isPlayMoney = opp.arb_type === 'play_money'
                 const isOverround = opp.arb_type === 'overround'
                 const feeDiff = grossPct - netPct
+                const confidence = opp.confidence || 'low'
+                const freshness = opp.freshness_seconds ?? 0
+                const isStale = freshness > 120
+                const isVeryStale = freshness > 300
+                const annRoi = opp.annualized_roi != null ? (opp.annualized_roi < 1 ? opp.annualized_roi * 100 : opp.annualized_roi) : null
 
                 return (
                   <tr
@@ -223,22 +235,30 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                       freshRow ? 'animate-row-highlight' : ''
                     } ${isPlayMoney ? 'opacity-60' : ''}`}
                   >
-                    {/* Net Profit % */}
+                    {/* Net Profit % + Confidence */}
                     <td className="px-6 py-3.5">
                       <div className="flex flex-col">
-                        <span
-                          className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold tabular-nums ${
-                            netPct >= 5
-                              ? 'bg-green-500/20 text-green-300'
-                              : netPct >= 2
-                              ? 'bg-green-500/10 text-green-400'
-                              : 'bg-green-500/5 text-green-500'
-                          }`}
-                        >
-                          +{netPct.toFixed(2)}%
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${CONFIDENCE_COLORS[confidence]}`} title={`${confidence} confidence`} />
+                          <span
+                            className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold tabular-nums ${
+                              netPct >= 5
+                                ? 'bg-green-500/20 text-green-300'
+                                : netPct >= 2
+                                ? 'bg-green-500/10 text-green-400'
+                                : 'bg-green-500/5 text-green-500'
+                            }`}
+                          >
+                            +{netPct.toFixed(2)}%
+                          </span>
+                          {isStale && (
+                            <span className={`text-[10px] px-1 py-0.5 rounded font-medium ${isVeryStale ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                              {isVeryStale ? 'STALE' : 'OLD'}
+                            </span>
+                          )}
+                        </div>
                         {feeDiff > 0.01 && (
-                          <span className="text-[10px] text-gray-600 mt-0.5 pl-1">
+                          <span className="text-[10px] text-gray-600 mt-0.5 pl-3.5">
                             gross {grossPct.toFixed(1)}% - {feeDiff.toFixed(1)}% fees
                           </span>
                         )}
@@ -307,11 +327,15 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                       </span>
                     </td>
 
-                    {/* Time */}
+                    {/* Annualized ROI */}
                     <td className="px-6 py-3.5">
-                      <span className={`text-xs tabular-nums ${freshRow ? 'text-green-400 font-medium' : 'text-gray-500'}`}>
-                        {relativeTime(opp.detected_at)}
-                      </span>
+                      {annRoi != null ? (
+                        <span className={`text-xs font-semibold tabular-nums ${annRoi >= 100 ? 'text-green-300' : annRoi >= 20 ? 'text-green-400' : 'text-gray-400'}`}>
+                          {annRoi >= 1000 ? `${(annRoi/1000).toFixed(0)}K%` : `${annRoi.toFixed(0)}%`}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-600">--</span>
+                      )}
                     </td>
                   </tr>
                 )

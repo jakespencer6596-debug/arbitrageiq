@@ -254,6 +254,11 @@ async def run_arb() -> None:
                 raw_payload=p.raw_payload,
                 metadata_=p.metadata_,
             )
+            # Extract end_date from metadata if available
+            end_date = ""
+            if p.metadata_ and isinstance(p.metadata_, dict):
+                end_date = p.metadata_.get("end_date", "")
+
             price_dicts.append({
                 "source": p.source,
                 "market_id": p.market_id,
@@ -264,6 +269,8 @@ async def run_arb() -> None:
                 "category": p.category or "other",
                 "market_url": market_url,
                 "volume": p.volume or 0,
+                "fetched_at": p.fetched_at.isoformat() if p.fetched_at else "",
+                "end_date": end_date,
             })
 
         # Run both cross-platform arb detection AND overround detection

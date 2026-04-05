@@ -261,6 +261,29 @@ class PolymarketClient:
             self._update_system_status(error=str(exc))
             return results
 
+        # Enrich with end_date from CLOB API (best-effort, non-blocking)
+        try:
+            async with httpx.AsyncClient(timeout=15) as clob_client:
+                clob_resp = await clob_client.get(
+                    "https://clob.polymarket.com/markets",
+                    params={"limit": 500},
+                )
+                if clob_resp.status_code == 200:
+                    clob_data = clob_resp.json().get("data", [])
+                    # Build lookup: condition_id -> end_date
+                    end_dates = {}
+                    for cm in clob_data:
+                        cid = cm.get("condition_id", "")
+                        end = cm.get("end_date_iso", "")
+                        if cid and end:
+                            end_dates[cid] = end
+                    # Attach end_date to results
+                    for r in results:
+                        r["end_date"] = end_dates.get(r["market_id"], "")
+                    logger.info(f"Polymarket CLOB: enriched {sum(1 for r in results if r.get('end_date'))} markets with end_dates")
+        except Exception as exc:
+            logger.debug(f"Polymarket CLOB enrichment failed (non-fatal): {exc}")
+
         # Filter to active category only
         results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
         logger.info(f"Polymarket: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
@@ -299,7 +322,10 @@ class PolymarketClient:
                             volume=r.get("volume"),
                             raw_payload=r.get("raw"),
                             fetched_at=r["timestamp"],
-                            metadata_={"slug": r.get("slug", "")} if r.get("slug") else {},
+                            metadata_={
+                                "slug": r.get("slug", ""),
+                                "end_date": r.get("end_date", ""),
+                            },
                         )
                     )
 

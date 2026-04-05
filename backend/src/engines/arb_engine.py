@@ -51,6 +51,8 @@ class ArbLeg:
     market_url: str = ""
     volume: float = 0
     fees: dict = field(default_factory=dict)
+    fetched_at: str = ""
+    end_date: str = ""
 
 
 @dataclass
@@ -64,6 +66,10 @@ class ArbOpportunityResult:
     net_profit_pct: float = 0.0
     net_profit_on_1000: float = 0.0
     arb_type: str = "cross_platform"
+    confidence: str = "medium"
+    freshness_seconds: int = 0
+    annualized_roi: float | None = None
+    end_date: str = ""
     is_live: bool = False
 
     def to_dict(self) -> dict:
@@ -75,6 +81,10 @@ class ArbOpportunityResult:
             "net_profit_pct": self.net_profit_pct,
             "net_profit_on_1000": self.net_profit_on_1000,
             "arb_type": self.arb_type,
+            "confidence": self.confidence,
+            "freshness_seconds": self.freshness_seconds,
+            "annualized_roi": self.annualized_roi,
+            "end_date": self.end_date,
             "legs": [
                 {
                     "source": leg.source,
@@ -86,6 +96,8 @@ class ArbOpportunityResult:
                     "market_url": leg.market_url,
                     "volume": leg.volume,
                     "fees": leg.fees,
+                    "fetched_at": leg.fetched_at,
+                    "end_date": leg.end_date,
                 }
                 for leg in self.legs
             ],
@@ -265,6 +277,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             market_url = price.get("market_url", "")
             volume = price.get("volume", 0) or 0
             market_id = price.get("market_id", "")
+            fetched_at = price.get("fetched_at", "")
+            end_date = price.get("end_date", "")
         else:
             event_name = getattr(price, "event_name", "")
             outcome = getattr(price, "outcome", "")
@@ -275,6 +289,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             market_url = getattr(price, "market_url", "")
             volume = getattr(price, "volume", 0) or 0
             market_id = getattr(price, "market_id", "")
+            fetched_at = getattr(price, "fetched_at", "") or ""
+            end_date = ""
 
         if not event_name or not source or not implied_prob:
             continue
@@ -310,6 +326,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             "market_url": market_url or "",
             "volume": volume,
             "market_id": market_id,
+            "fetched_at": fetched_at,
+            "end_date": end_date,
             "idx": len(parsed),
         })
 
@@ -444,6 +462,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
                 market_url=cheap["market_url"],
                 volume=cheap.get("volume", 0),
                 fees=fee_info_cheap,
+                fetched_at=cheap.get("fetched_at", ""),
+                end_date=cheap.get("end_date", ""),
             ),
             ArbLeg(
                 source=expensive["source"],
@@ -455,6 +475,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
                 market_url=expensive["market_url"],
                 volume=expensive.get("volume", 0),
                 fees=fee_info_expensive,
+                fetched_at=expensive.get("fetched_at", ""),
+                end_date=expensive.get("end_date", ""),
             ),
         ]
 
@@ -463,6 +485,42 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             _get_fee_info(l.source).get("is_play_money") for l in legs
         )
 
+        # Compute freshness (max age of any leg in seconds)
+        freshness = 0
+        for leg in legs:
+            if leg.fetched_at:
+                try:
+                    from datetime import datetime, timezone
+                    fetched = datetime.fromisoformat(leg.fetched_at.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - fetched).total_seconds()
+                    freshness = max(freshness, int(age))
+                except Exception:
+                    pass
+
+        # Compute annualized ROI from resolution date
+        ann_roi = None
+        arb_end_date = ""
+        for leg in legs:
+            if leg.end_date:
+                arb_end_date = leg.end_date
+                break
+        if arb_end_date and net_profit_pct > 0:
+            try:
+                from datetime import datetime, timezone
+                end_dt = datetime.fromisoformat(arb_end_date.replace("Z", "+00:00"))
+                days = max(1, (end_dt - datetime.now(timezone.utc)).days)
+                ann_roi = round((1 + net_profit_pct) ** (365.0 / days) - 1, 4)
+            except Exception:
+                pass
+
+        # Confidence score based on matching quality + volume + freshness
+        min_vol = min(cheap.get("volume", 0), expensive.get("volume", 0))
+        confidence = "low"
+        if fuzzy >= 0.85 and min_vol >= 10000 and freshness < 120:
+            confidence = "high"
+        elif fuzzy >= 0.70 and min_vol >= 1000:
+            confidence = "medium"
+
         results.append(ArbOpportunityResult(
             event_name=f"{cheap['normalized_name']} vs {expensive['source']}",
             category=a["category"],
@@ -470,6 +528,10 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             net_profit_pct=round(net_profit_pct, 4),
             net_profit_on_1000=round(net_profit, 2),
             arb_type="play_money" if has_play_money else "cross_platform",
+            confidence=confidence,
+            freshness_seconds=freshness,
+            annualized_roi=ann_roi,
+            end_date=arb_end_date,
             legs=legs,
             profit_on_1000=round(base_stake * profit_pct, 2),
         ))
