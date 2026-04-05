@@ -36,6 +36,33 @@ PRICE_MAX_AGE_HOURS = 2
 MIN_ARB_PROFIT_PCT = 0.001  # 0.1% — real cross-bookmaker arbs are small
 
 # ---------------------------------------------------------------------------
+# Platform fee structures — used to compute NET profit after fees
+# ---------------------------------------------------------------------------
+PLATFORM_FEES = {
+    "polymarket": {
+        "trade_fee": 0.00,       # 0% maker fee on CLOB
+        "withdrawal_fee": 0.00,  # USDC on Polygon, no withdrawal fee
+        "profit_fee": 0.00,
+    },
+    "kalshi": {
+        "trade_fee": 0.02,       # ~2% effective spread cost
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.00,
+    },
+    "predictit": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.05,  # 5% withdrawal fee on all funds
+        "profit_fee": 0.10,      # 10% fee on profits
+    },
+    "manifold": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.00,
+        "is_play_money": True,   # Mana, not real USD
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Category system — user selects one category at a time to save memory
 # ---------------------------------------------------------------------------
 CATEGORIES = ["politics", "sports", "crypto", "entertainment", "science_tech", "weather", "other"]

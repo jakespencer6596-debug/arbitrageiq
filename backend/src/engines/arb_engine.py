@@ -12,8 +12,31 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from dataclasses import dataclass
-from constants import MIN_ARB_PROFIT_PCT
+from dataclasses import dataclass, field
+from constants import MIN_ARB_PROFIT_PCT, PLATFORM_FEES
+
+
+def _get_fee_info(source: str) -> dict:
+    """Get fee structure for a platform."""
+    src = source.lower().strip()
+    # Check for exact match or substring match (for bookmaker sources like "draftkings_h2h")
+    if src in PLATFORM_FEES:
+        return PLATFORM_FEES[src]
+    for name, fees in PLATFORM_FEES.items():
+        if name in src:
+            return fees
+    return {"trade_fee": 0.01, "withdrawal_fee": 0.0, "profit_fee": 0.0}
+
+
+def _compute_net_profit(gross_profit: float, stake: float, source: str) -> float:
+    """Compute net profit after platform fees."""
+    fees = _get_fee_info(source)
+    trade_cost = stake * fees.get("trade_fee", 0)
+    profit_after_trade = gross_profit - trade_cost
+    if profit_after_trade > 0:
+        profit_after_trade -= profit_after_trade * fees.get("profit_fee", 0)
+    withdrawal_cost = (stake + profit_after_trade) * fees.get("withdrawal_fee", 0)
+    return profit_after_trade - withdrawal_cost
 
 
 @dataclass
@@ -26,6 +49,8 @@ class ArbLeg:
     stake_pct: float
     stake_dollars: float
     market_url: str = ""
+    volume: float = 0
+    fees: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -36,6 +61,9 @@ class ArbOpportunityResult:
     profit_pct: float
     legs: list
     profit_on_1000: float
+    net_profit_pct: float = 0.0
+    net_profit_on_1000: float = 0.0
+    arb_type: str = "cross_platform"
     is_live: bool = False
 
     def to_dict(self) -> dict:
@@ -44,6 +72,9 @@ class ArbOpportunityResult:
             "event_name": self.event_name,
             "category": self.category,
             "profit_pct": self.profit_pct,
+            "net_profit_pct": self.net_profit_pct,
+            "net_profit_on_1000": self.net_profit_on_1000,
+            "arb_type": self.arb_type,
             "legs": [
                 {
                     "source": leg.source,
@@ -53,6 +84,8 @@ class ArbOpportunityResult:
                     "stake_pct": leg.stake_pct,
                     "stake_dollars": leg.stake_dollars,
                     "market_url": leg.market_url,
+                    "volume": leg.volume,
+                    "fees": leg.fees,
                 }
                 for leg in self.legs
             ],
@@ -212,6 +245,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             raw_odds = price.get("raw_odds")
             category = price.get("category", "other")
             market_url = price.get("market_url", "")
+            volume = price.get("volume", 0) or 0
+            market_id = price.get("market_id", "")
         else:
             event_name = getattr(price, "event_name", "")
             outcome = getattr(price, "outcome", "")
@@ -220,6 +255,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             raw_odds = getattr(price, "raw_odds", None)
             category = getattr(price, "category", "other")
             market_url = getattr(price, "market_url", "")
+            volume = getattr(price, "volume", 0) or 0
+            market_id = getattr(price, "market_id", "")
 
         if not event_name or not source or not implied_prob:
             continue
@@ -253,6 +290,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             "tokens": tokens,
             "entities": entities,
             "market_url": market_url or "",
+            "volume": volume,
+            "market_id": market_id,
             "idx": len(parsed),
         })
 
@@ -353,6 +392,23 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         stake_pct1 = (1.0 / odds_yes) / arb_sum
         stake_pct2 = (1.0 / odds_no) / arb_sum
 
+        # Compute fee-adjusted net profit
+        stake1 = base_stake * stake_pct1
+        stake2 = base_stake * stake_pct2
+        gross_profit = base_stake * profit_pct
+        # Net profit accounts for fees on BOTH legs
+        net1 = _compute_net_profit(gross_profit * stake_pct1, stake1, cheap["source"])
+        net2 = _compute_net_profit(gross_profit * stake_pct2, stake2, expensive["source"])
+        net_profit = net1 + net2
+        net_profit_pct = net_profit / base_stake if base_stake > 0 else 0
+
+        # Skip arbs that are unprofitable after fees
+        if net_profit_pct < 0.001:
+            continue
+
+        fee_info_cheap = _get_fee_info(cheap["source"])
+        fee_info_expensive = _get_fee_info(expensive["source"])
+
         legs = [
             ArbLeg(
                 source=cheap["source"],
@@ -360,8 +416,10 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
                 decimal_odds=round(odds_yes, 4),
                 implied_prob=round(cheap["implied_prob"], 4),
                 stake_pct=round(stake_pct1, 4),
-                stake_dollars=round(base_stake * stake_pct1, 2),
+                stake_dollars=round(stake1, 2),
                 market_url=cheap["market_url"],
+                volume=cheap.get("volume", 0),
+                fees=fee_info_cheap,
             ),
             ArbLeg(
                 source=expensive["source"],
@@ -369,19 +427,146 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
                 decimal_odds=round(odds_no, 4),
                 implied_prob=round(1.0 - expensive["implied_prob"], 4),
                 stake_pct=round(stake_pct2, 4),
-                stake_dollars=round(base_stake * stake_pct2, 2),
+                stake_dollars=round(stake2, 2),
                 market_url=expensive["market_url"],
+                volume=expensive.get("volume", 0),
+                fees=fee_info_expensive,
             ),
         ]
+
+        # Flag if any leg uses play money
+        has_play_money = any(
+            _get_fee_info(l.source).get("is_play_money") for l in legs
+        )
 
         results.append(ArbOpportunityResult(
             event_name=f"{cheap['normalized_name']} vs {expensive['source']}",
             category=a["category"],
             profit_pct=round(profit_pct, 4),
+            net_profit_pct=round(net_profit_pct, 4),
+            net_profit_on_1000=round(net_profit, 2),
+            arb_type="play_money" if has_play_money else "cross_platform",
             legs=legs,
             profit_on_1000=round(base_stake * profit_pct, 2),
         ))
 
-    # Sort by profit descending, limit to top 50
-    results.sort(key=lambda x: x.profit_pct, reverse=True)
+    # Sort by NET profit descending, limit to top 50
+    results.sort(key=lambda x: x.net_profit_pct, reverse=True)
     return results[:50]
+
+
+# ---------------------------------------------------------------------------
+# Overround detection — arbs within a single platform
+# ---------------------------------------------------------------------------
+
+def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[ArbOpportunityResult]:
+    """
+    Detect same-market overround arbs on a single platform.
+
+    When multiple contracts in one market (e.g., PredictIt "Who will win?")
+    have YES prices summing to > 100%, you can sell all contracts for
+    guaranteed profit. When they sum to < 100%, you can buy all for guaranteed profit.
+
+    This does NOT require cross-platform matching — works on a single source.
+    """
+    from collections import defaultdict
+
+    # Group prices by (source, market_id_prefix)
+    # PredictIt uses "marketid_contractid" format
+    market_groups: dict[str, list[dict]] = defaultdict(list)
+
+    for price in market_prices:
+        if isinstance(price, dict):
+            source = price.get("source", "").lower().strip()
+            market_id = price.get("market_id", "")
+            event_name = price.get("event_name", "")
+            implied_prob = price.get("implied_probability", 0)
+            market_url = price.get("market_url", "")
+            volume = price.get("volume", 0) or 0
+            category = price.get("category", "other")
+        else:
+            source = getattr(price, "source", "").lower().strip()
+            market_id = getattr(price, "market_id", "")
+            event_name = getattr(price, "event_name", "")
+            implied_prob = getattr(price, "implied_probability", 0)
+            market_url = getattr(price, "market_url", "")
+            volume = getattr(price, "volume", 0) or 0
+            category = getattr(price, "category", "other")
+
+        if not market_id or not implied_prob or implied_prob <= 0:
+            continue
+
+        # Extract the parent market ID (before "_" for PredictIt)
+        if source == "predictit" and "_" in market_id:
+            parent_id = market_id.split("_")[0]
+        else:
+            parent_id = market_id
+
+        group_key = f"{source}:{parent_id}"
+        market_groups[group_key].append({
+            "source": source,
+            "market_id": market_id,
+            "event_name": event_name,
+            "implied_prob": implied_prob,
+            "market_url": market_url,
+            "volume": volume,
+            "category": category,
+        })
+
+    results = []
+    for group_key, contracts in market_groups.items():
+        if len(contracts) < 2:
+            continue  # Need multiple contracts
+
+        # Sum of all YES implied probabilities
+        total_prob = sum(c["implied_prob"] for c in contracts)
+
+        # If total > 1.0, selling all contracts gives guaranteed profit
+        if total_prob > 1.02:  # 2% minimum to be meaningful after fees
+            overround = total_prob - 1.0
+            profit_pct = overround / total_prob  # ROI on total capital needed
+
+            source = contracts[0]["source"]
+            category = contracts[0]["category"]
+            # Use the market name from the first contract (strip contract suffix)
+            market_name = contracts[0]["event_name"]
+            if " -- " in market_name:
+                market_name = market_name.split(" -- ")[0]
+
+            fee_info = _get_fee_info(source)
+            legs = []
+            for c in contracts:
+                contract_name = c["event_name"]
+                if " -- " in contract_name:
+                    contract_name = contract_name.split(" -- ")[1]
+                legs.append(ArbLeg(
+                    source=c["source"],
+                    outcome=f"SELL {contract_name} @ {c['implied_prob']:.0%}",
+                    decimal_odds=round(1.0 / c["implied_prob"], 4) if c["implied_prob"] > 0 else 0,
+                    implied_prob=round(c["implied_prob"], 4),
+                    stake_pct=round(c["implied_prob"] / total_prob, 4),
+                    stake_dollars=round(base_stake * c["implied_prob"] / total_prob, 2),
+                    market_url=c["market_url"],
+                    volume=c["volume"],
+                    fees=fee_info,
+                ))
+
+            # Net profit after fees
+            gross = base_stake * profit_pct
+            net = _compute_net_profit(gross, base_stake, source)
+            net_pct = net / base_stake if base_stake > 0 else 0
+
+            if net_pct > 0.001:
+                results.append(ArbOpportunityResult(
+                    event_name=f"[Overround] {market_name} ({source})",
+                    category=category,
+                    profit_pct=round(profit_pct, 4),
+                    net_profit_pct=round(net_pct, 4),
+                    net_profit_on_1000=round(net, 2),
+                    arb_type="overround",
+                    legs=legs,
+                    profit_on_1000=round(gross, 2),
+                ))
+
+    results.sort(key=lambda x: x.net_profit_pct, reverse=True)
+    return results[:20]

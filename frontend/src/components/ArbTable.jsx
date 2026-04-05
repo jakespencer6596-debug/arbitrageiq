@@ -193,7 +193,7 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                   className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
                   onClick={() => handleSort('profit_1k')}
                 >
-                  Profit on $1K <SortIcon column="profit_1k" />
+                  Net on $1K <SortIcon column="profit_1k" />
                 </th>
                 <th
                   className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
@@ -205,12 +205,15 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
             </thead>
             <tbody className="divide-y divide-gray-800/50">
               {paginatedRows.map((opp) => {
-                const profitPctRaw = opp.profit_pct ?? 0
-                // profit_pct from API is 0-1 scale (0.023 = 2.3%), convert to display %
-                const profitPct = profitPctRaw < 1 ? profitPctRaw * 100 : profitPctRaw
-                const profitOn1K = opp.profit_on_base ?? (profitPctRaw < 1 ? profitPctRaw * 1000 : (profitPctRaw / 100) * 1000)
-                const books = opp.legs?.map((l) => l.source || l.book || l.platform).filter(Boolean) || []
+                const grossPctRaw = opp.profit_pct ?? 0
+                const netPctRaw = opp.net_profit_pct ?? grossPctRaw
+                const netPct = netPctRaw < 1 ? netPctRaw * 100 : netPctRaw
+                const grossPct = grossPctRaw < 1 ? grossPctRaw * 100 : grossPctRaw
+                const netOn1K = opp.net_profit_on_1000 ?? (netPctRaw < 1 ? netPctRaw * 1000 : (netPctRaw / 100) * 1000)
                 const freshRow = isNew(opp.detected_at)
+                const isPlayMoney = opp.arb_type === 'play_money'
+                const isOverround = opp.arb_type === 'overround'
+                const feeDiff = grossPct - netPct
 
                 return (
                   <tr
@@ -218,35 +221,47 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                     onClick={() => onSelectOpportunity(opp)}
                     className={`cursor-pointer transition-colors hover:bg-gray-800/60 group ${
                       freshRow ? 'animate-row-highlight' : ''
-                    }`}
+                    } ${isPlayMoney ? 'opacity-60' : ''}`}
                   >
-                    {/* Profit % */}
+                    {/* Net Profit % */}
                     <td className="px-6 py-3.5">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold tabular-nums ${
-                          profitPct >= 5
-                            ? 'bg-green-500/20 text-green-300'
-                            : profitPct >= 2
-                            ? 'bg-green-500/10 text-green-400'
-                            : 'bg-green-500/5 text-green-500'
-                        }`}
-                      >
-                        +{profitPct.toFixed(2)}%
-                      </span>
+                      <div className="flex flex-col">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold tabular-nums ${
+                            netPct >= 5
+                              ? 'bg-green-500/20 text-green-300'
+                              : netPct >= 2
+                              ? 'bg-green-500/10 text-green-400'
+                              : 'bg-green-500/5 text-green-500'
+                          }`}
+                        >
+                          +{netPct.toFixed(2)}%
+                        </span>
+                        {feeDiff > 0.01 && (
+                          <span className="text-[10px] text-gray-600 mt-0.5 pl-1">
+                            gross {grossPct.toFixed(1)}% - {feeDiff.toFixed(1)}% fees
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Event */}
                     <td className="px-6 py-3.5">
-                      <a
-                        href={`https://www.google.com/search?q=${encodeURIComponent((opp.event_name || 'prediction market') + ' prediction market')}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-gray-200 font-medium transition-colors hover:text-blue-400 hover:underline"
-                      >
-                        {opp.event_name || 'Unknown Event'}
-                        <span className="ml-1 text-gray-500 text-xs group-hover:text-blue-400 transition-colors">&#8599;</span>
-                      </a>
+                      <div className="flex items-start gap-1.5">
+                        {isOverround && (
+                          <span className="shrink-0 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-1.5 py-0.5 rounded font-medium mt-0.5">
+                            OVERROUND
+                          </span>
+                        )}
+                        {isPlayMoney && (
+                          <span className="shrink-0 text-[10px] bg-gray-500/10 text-gray-400 border border-gray-500/20 px-1.5 py-0.5 rounded font-medium mt-0.5">
+                            PLAY $
+                          </span>
+                        )}
+                        <span className="text-gray-200 font-medium">
+                          {opp.event_name || 'Unknown Event'}
+                        </span>
+                      </div>
                     </td>
 
                     {/* Category */}
@@ -260,7 +275,6 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                         {opp.legs && opp.legs.length > 0
                           ? opp.legs.map((leg, i) => {
                               const b = leg.source || leg.book || leg.platform || ''
-                              // Prefer direct market_url from leg data, fall back to search URL
                               const url = leg.market_url || bookUrl(b, opp.event_name)
                               return url ? (
                                 <a
@@ -286,10 +300,10 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                       </div>
                     </td>
 
-                    {/* Profit on $1K */}
+                    {/* Net Profit on $1K */}
                     <td className="px-6 py-3.5">
                       <span className="text-green-400 font-semibold tabular-nums">
-                        ${profitOn1K.toFixed(2)}
+                        ${netOn1K.toFixed(2)}
                       </span>
                     </td>
 

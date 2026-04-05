@@ -240,13 +240,7 @@ async def run_arb() -> None:
             logger.debug("run_arb: no active market prices — nothing to do")
             return
 
-        # 2. Run detection engine
-        try:
-            from engines.arb_engine import detect_arb
-        except ImportError:
-            logger.warning("run_arb: engines.arb_detector not available — skipping")
-            return
-
+        # 2. Build price dicts for detection engines
         price_dicts = []
         for p in prices:
             # Use event_name or fall back to market_title
@@ -269,15 +263,25 @@ async def run_arb() -> None:
                 "raw_odds": odds,
                 "category": p.category or "other",
                 "market_url": market_url,
+                "volume": p.volume or 0,
             })
 
-        opportunities = detect_arb(price_dicts)
+        # Run both cross-platform arb detection AND overround detection
+        try:
+            from engines.arb_engine import detect_arb, detect_overround
+        except ImportError:
+            logger.warning("run_arb: engines.arb_engine not available — skipping")
+            return
+
+        cross_arbs = detect_arb(price_dicts)
+        overround_arbs = detect_overround(price_dicts)
+        opportunities = cross_arbs + overround_arbs
 
         if not opportunities:
             logger.debug("run_arb: no arbitrage opportunities detected")
             return
 
-        logger.info(f"run_arb: detected {len(opportunities)} arb opportunities")
+        logger.info(f"run_arb: detected {len(cross_arbs)} cross-platform + {len(overround_arbs)} overround arbs")
 
         # 3. Persist to DB
         saved_count = 0
