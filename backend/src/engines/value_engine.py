@@ -22,11 +22,13 @@ from constants import PLATFORM_FEES
 logger = logging.getLogger(__name__)
 
 # Minimum edge (in absolute probability) to flag as a value bet
-MIN_EDGE = 0.05  # 5 percentage points
+MIN_EDGE = 0.03  # 3 percentage points — actionable on low-fee platforms
 # Minimum number of platforms with data to compute consensus
 MIN_PLATFORMS = 2
 # Platforms where you can actually trade (others are reference only)
 TRADEABLE_PLATFORMS = {"polymarket", "kalshi"}
+# All platforms count as sources for consensus computation
+# The value bet is flagged on a TRADEABLE platform when it deviates from consensus
 
 
 def _get_fee_info(source: str) -> dict:

@@ -53,16 +53,17 @@ GRAPHQL_QUERY = """
 """
 
 # Map Metaforecast platform IDs to our source names
+# Skip platforms we already ingest directly to avoid duplicate prices
 PLATFORM_MAP = {
     "metaculus": "metaculus",
-    "polymarket": "polymarket_mf",  # suffix to avoid collision with direct Polymarket ingestion
-    "kalshi": "kalshi_mf",
-    "manifold": "manifold_mf",
+    "polymarket": None,  # Skip — we ingest directly
+    "kalshi": None,       # Skip — we ingest directly
+    "manifold": None,     # Skip — we ingest directly
     "goodjudgmentopen": "gjopen",
     "infer": "infer",
     "hypermind": "hypermind",
     "rootclaim": "rootclaim",
-    "predictit": None,  # Skip — we dropped PredictIt
+    "predictit": None,    # Dropped
 }
 
 
@@ -132,10 +133,10 @@ class MetaforecastClient:
                 num_forecasts = quality.get("numForecasts", 0) or 0
                 volume = quality.get("volume", 0) or 0
 
-                # Map to our source name
+                # Map to our source name — pass through unknown platforms
                 source = PLATFORM_MAP.get(platform_id, platform_id)
                 if source is None:
-                    continue  # Skip dropped platforms
+                    continue  # Skip platforms we already ingest directly
 
                 category = categorise(title)
 

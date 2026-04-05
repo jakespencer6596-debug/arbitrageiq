@@ -181,7 +181,7 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
                   className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
                   onClick={() => handleSort('profit_pct')}
                 >
-                  Profit % <SortIcon column="profit_pct" />
+                  Edge <SortIcon column="profit_pct" />
                 </th>
                 <th
                   className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
@@ -214,9 +214,14 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
               {paginatedRows.map((opp) => {
                 const grossPctRaw = opp.profit_pct ?? 0
                 const netPctRaw = opp.net_profit_pct ?? grossPctRaw
-                const netPct = netPctRaw < 1 ? netPctRaw * 100 : netPctRaw
+                // For value bets, use edge as the primary metric
+                const isVB = opp.arb_type === 'value_bet'
+                const displayPctRaw = isVB ? Math.abs(opp.edge ?? grossPctRaw) : netPctRaw
+                const netPct = displayPctRaw < 1 ? displayPctRaw * 100 : displayPctRaw
                 const grossPct = grossPctRaw < 1 ? grossPctRaw * 100 : grossPctRaw
-                const netOn1K = opp.net_profit_on_1000 ?? (netPctRaw < 1 ? netPctRaw * 1000 : (netPctRaw / 100) * 1000)
+                const netOn1K = isVB
+                  ? (displayPctRaw < 1 ? displayPctRaw * 1000 : (displayPctRaw / 100) * 1000)
+                  : (opp.net_profit_on_1000 ?? (netPctRaw < 1 ? netPctRaw * 1000 : (netPctRaw / 100) * 1000))
                 const freshRow = isNew(opp.detected_at)
                 const isPlayMoney = opp.arb_type === 'play_money'
                 const isOverround = opp.arb_type === 'overround'
