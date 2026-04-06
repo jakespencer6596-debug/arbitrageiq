@@ -210,7 +210,21 @@ class KalshiClient:
 
                     for mkt in markets:
                         ticker = mkt.get("ticker", "")
+                        event_ticker = mkt.get("event_ticker", "")
+
+                        # Skip multi-leg parlay markets (KXMVE) — titles are garbage
+                        if event_ticker.startswith("KXMVE"):
+                            continue
+
                         title = mkt.get("title", "")
+                        # Use subtitle if title looks like concatenated outcomes
+                        if title.startswith("yes ") or title.startswith("no "):
+                            subtitle = mkt.get("yes_sub_title", "") or mkt.get("subtitle", "")
+                            if subtitle and not subtitle.startswith("yes "):
+                                title = subtitle
+                            else:
+                                continue  # Skip — no usable title
+
                         yes_prob = self._yes_probability(mkt)
                         no_prob = 1.0 - yes_prob
                         category = categorise(title)
