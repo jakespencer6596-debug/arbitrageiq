@@ -49,6 +49,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String, nullable=False, unique=True)
     password_hash = Column(String, nullable=False)
+    role = Column(String, default="user")  # user, admin, employee
     subscription_tier = Column(String, default="free")  # free, daily, weekly, monthly
     subscription_expires_at = Column(DateTime, nullable=True)
     stripe_customer_id = Column(String, nullable=True)

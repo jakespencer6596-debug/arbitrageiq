@@ -6,12 +6,14 @@ import CategorySelector from './components/CategorySelector'
 import LoginPage from './components/LoginPage'
 import PricingPage from './components/PricingPage'
 import PaywallOverlay from './components/PaywallOverlay'
+import AdminDashboard from './components/AdminDashboard'
 
 export default function App() {
   // Auth state
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [showPricing, setShowPricing] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
 
   // App state
   const [activeCategory, setActiveCategory] = useState(null)
@@ -32,6 +34,7 @@ export default function App() {
   const pollRef = useRef(null)
 
   const isPremium = user?.subscription_tier && user.subscription_tier !== 'free'
+  const isAdmin = user?.role === 'admin' || user?.role === 'employee'
 
   // Check auth on mount
   useEffect(() => {
@@ -216,6 +219,8 @@ export default function App() {
         premiumData={premiumData}
         onUpgrade={() => setShowPricing(true)}
         onLogout={handleLogout}
+        isAdmin={isAdmin}
+        onOpenAdmin={() => setShowAdmin(true)}
       />
       {selectedOpp && isPremium && (
         <StakeCalculator
@@ -228,6 +233,9 @@ export default function App() {
           onSelectPlan={handleSelectPlan}
           onClose={() => setShowPricing(false)}
         />
+      )}
+      {showAdmin && isAdmin && (
+        <AdminDashboard onClose={() => setShowAdmin(false)} />
       )}
     </>
   )

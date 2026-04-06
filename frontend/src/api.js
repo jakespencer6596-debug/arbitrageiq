@@ -57,6 +57,25 @@ export const api = {
   getMe: () => request('/api/auth/me'),
   getPricing: () => request('/api/auth/pricing'),
 
+  // Admin
+  adminStats: () => request('/api/admin/stats'),
+  adminUsers: () => request('/api/admin/users'),
+  adminSetRole: (userId, role) =>
+    request(`/api/admin/users/${userId}/role`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    }),
+  adminSetTier: (userId, tier) =>
+    request(`/api/admin/users/${userId}/tier`, {
+      method: 'POST',
+      body: JSON.stringify({ tier }),
+    }),
+  makeAdmin: (email, secret) =>
+    request('/api/admin/make-admin', {
+      method: 'POST',
+      body: JSON.stringify({ email, secret }),
+    }),
+
   // Data
   getSnapshot: () => request('/api/snapshot'),
   getOpportunities: () => request('/api/opportunities'),

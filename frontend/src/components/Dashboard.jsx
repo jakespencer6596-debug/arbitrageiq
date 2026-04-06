@@ -44,6 +44,8 @@ export default function Dashboard({
   premiumData,
   onUpgrade,
   onLogout,
+  isAdmin,
+  onOpenAdmin,
 }) {
   const activeArbs = stats?.active_arbs ?? opportunities?.length ?? 0
   const activeDiscs = stats?.active_discrepancies ?? discrepancies?.length ?? 0
@@ -104,6 +106,16 @@ export default function Dashboard({
                 className="text-[10px] bg-orange-500/15 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded font-bold hover:bg-orange-500/25 transition-colors"
               >
                 UPGRADE
+              </button>
+            )}
+
+            {/* Admin button */}
+            {isAdmin && (
+              <button
+                onClick={onOpenAdmin}
+                className="text-[10px] bg-purple-500/15 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded font-bold hover:bg-purple-500/25 transition-colors"
+              >
+                ADMIN
               </button>
             )}
 

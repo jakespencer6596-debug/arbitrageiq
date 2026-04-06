@@ -140,6 +140,7 @@ async def get_me(request: Request):
             "user": {
                 "id": user.id,
                 "email": user.email,
+                "role": user.role or "user",
                 "subscription_tier": tier,
                 "subscription_expires_at": user.subscription_expires_at.isoformat() if user.subscription_expires_at else None,
             },
@@ -158,6 +159,214 @@ async def get_pricing():
             {"key": "monthly", "name": "Monthly", "price": 98.99, "interval": "month", "label": "Best Value"},
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints
+# ---------------------------------------------------------------------------
+
+def _require_admin(request: Request) -> dict:
+    """Verify the current user is an admin."""
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == payload["user_id"]).first()
+        if not user or user.role not in ("admin", "employee"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="Admin access required")
+        return {"user_id": user.id, "email": user.email, "role": user.role}
+    finally:
+        db.close()
+
+
+@router.get("/admin/stats")
+async def admin_stats(request: Request):
+    """Admin dashboard — internal stats."""
+    _require_admin(request)
+    db = SessionLocal()
+    try:
+        total_users = db.query(func.count(User.id)).scalar() or 0
+        premium_users = db.query(func.count(User.id)).filter(
+            User.subscription_tier != "free"
+        ).scalar() or 0
+        admin_users = db.query(func.count(User.id)).filter(
+            User.role.in_(["admin", "employee"])
+        ).scalar() or 0
+
+        total_arbs = db.query(func.count(ArbOpportunity.id)).filter(
+            ArbOpportunity.is_active == True  # noqa: E712
+        ).scalar() or 0
+        total_discs = db.query(func.count(Discrepancy.id)).filter(
+            Discrepancy.is_active == True  # noqa: E712
+        ).scalar() or 0
+        total_prices = db.query(func.count(MarketPrice.id)).filter(
+            MarketPrice.is_active == True  # noqa: E712
+        ).scalar() or 0
+        total_markets = db.query(func.count(TrackedMarket.id)).scalar() or 0
+
+        # Source breakdown
+        source_counts = dict(
+            db.query(MarketPrice.source, func.count(MarketPrice.id))
+            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .group_by(MarketPrice.source)
+            .all()
+        )
+
+        # Platform health
+        statuses = db.query(SystemStatus).all()
+        platforms = [
+            {
+                "name": s.source,
+                "status": s.status or "unknown",
+                "last_success": s.last_success_at.isoformat() if s.last_success_at else None,
+                "last_error": s.last_error,
+                "failures": s.consecutive_failures or 0,
+            }
+            for s in statuses
+        ]
+
+        # Recent users
+        recent_users = (
+            db.query(User)
+            .order_by(User.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        users_list = [
+            {
+                "id": u.id,
+                "email": u.email,
+                "role": u.role,
+                "tier": u.subscription_tier,
+                "created": u.created_at.isoformat() if u.created_at else None,
+                "expires": u.subscription_expires_at.isoformat() if u.subscription_expires_at else None,
+            }
+            for u in recent_users
+        ]
+
+        return {
+            "users": {"total": total_users, "premium": premium_users, "admin": admin_users},
+            "data": {
+                "active_prices": total_prices,
+                "active_arbs": total_arbs,
+                "active_discrepancies": total_discs,
+                "tracked_markets": total_markets,
+                "sources": source_counts,
+            },
+            "platforms": platforms,
+            "recent_users": users_list,
+            "active_category": constants.ACTIVE_CATEGORY,
+        }
+    finally:
+        db.close()
+
+
+@router.get("/admin/users")
+async def admin_users(request: Request):
+    """List all users."""
+    _require_admin(request)
+    db = SessionLocal()
+    try:
+        users = db.query(User).order_by(User.created_at.desc()).all()
+        return {
+            "users": [
+                {
+                    "id": u.id,
+                    "email": u.email,
+                    "role": u.role,
+                    "tier": u.subscription_tier,
+                    "created": u.created_at.isoformat() if u.created_at else None,
+                    "expires": u.subscription_expires_at.isoformat() if u.subscription_expires_at else None,
+                }
+                for u in users
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/admin/users/{user_id}/role")
+async def admin_set_role(user_id: int, body: dict, request: Request):
+    """Set a user's role (admin only)."""
+    admin = _require_admin(request)
+    if admin["role"] != "admin":
+        return {"error": "Only admins can change roles"}
+
+    role = body.get("role", "")
+    if role not in ("user", "employee", "admin"):
+        return {"error": "Invalid role. Must be: user, employee, admin"}
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"error": "User not found"}
+        user.role = role
+        # Admins and employees get premium features automatically
+        if role in ("admin", "employee") and user.subscription_tier == "free":
+            user.subscription_tier = "monthly"
+            user.subscription_expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3650)
+        db.commit()
+        return {"status": "ok", "user_id": user_id, "role": role}
+    finally:
+        db.close()
+
+
+@router.post("/admin/users/{user_id}/tier")
+async def admin_set_tier(user_id: int, body: dict, request: Request):
+    """Set a user's subscription tier (admin only)."""
+    _require_admin(request)
+    tier = body.get("tier", "")
+    if tier not in ("free", "daily", "weekly", "monthly"):
+        return {"error": "Invalid tier"}
+
+    days = {"free": 0, "daily": 1, "weekly": 7, "monthly": 30}.get(tier, 0)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"error": "User not found"}
+        user.subscription_tier = tier
+        if tier != "free":
+            user.subscription_expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=days)
+        else:
+            user.subscription_expires_at = None
+        db.commit()
+        return {"status": "ok", "user_id": user_id, "tier": tier}
+    finally:
+        db.close()
+
+
+@router.post("/admin/make-admin")
+async def make_first_admin(body: dict):
+    """
+    Bootstrap: make the first admin. Only works if there are zero admins.
+    Requires email + a secret key.
+    """
+    import os
+    admin_secret = os.getenv("ADMIN_SECRET", "arbitrageiq-admin-setup-2026")
+    if body.get("secret") != admin_secret:
+        return {"error": "Invalid secret"}
+
+    email = (body.get("email") or "").strip().lower()
+    db = SessionLocal()
+    try:
+        # Check if any admins exist
+        existing_admins = db.query(User).filter(User.role == "admin").count()
+        if existing_admins > 0:
+            return {"error": "Admin already exists. Use /admin/users/{id}/role to add more."}
+
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return {"error": f"User {email} not found. Register first, then call this endpoint."}
+
+        user.role = "admin"
+        user.subscription_tier = "monthly"
+        user.subscription_expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3650)
+        db.commit()
+        return {"status": "ok", "message": f"{email} is now admin with premium access"}
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -456,9 +665,13 @@ async def get_opportunities(request: Request, limit: int = Query(50, ge=1, le=20
         db_check = SessionLocal()
         try:
             user = db_check.query(User).filter(User.id == user_data["user_id"]).first()
-            if user and user.subscription_tier != "free":
-                if user.subscription_expires_at and user.subscription_expires_at >= datetime.now(timezone.utc).replace(tzinfo=None):
+            if user:
+                # Admins and employees always get premium
+                if user.role in ("admin", "employee"):
                     is_premium = True
+                elif user.subscription_tier != "free":
+                    if user.subscription_expires_at and user.subscription_expires_at >= datetime.now(timezone.utc).replace(tzinfo=None):
+                        is_premium = True
         finally:
             db_check.close()
 
