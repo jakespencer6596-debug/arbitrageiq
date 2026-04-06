@@ -178,6 +178,20 @@ async def fetch_manifold() -> None:
         logger.error(f"fetch_manifold failed: {exc}", exc_info=True)
 
 
+async def fetch_smarkets() -> None:
+    """Fetch prediction market data from Smarkets exchange."""
+    try:
+        from ingestion.smarkets import SmarketsClient
+
+        client = SmarketsClient()
+        results = await client.fetch()
+        logger.info(f"fetch_smarkets: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_smarkets: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_smarkets failed: {exc}", exc_info=True)
+
+
 async def fetch_metaforecast() -> None:
     """Fetch cross-platform prediction data from Metaforecast aggregator."""
     try:
@@ -800,6 +814,16 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         next_run_time=_now + timedelta(seconds=170),
+    )
+    _scheduler.add_job(
+        fetch_smarkets,
+        "interval",
+        seconds=300,
+        id="fetch_smarkets",
+        name="Smarkets exchange",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=45),
     )
     _scheduler.add_job(
         fetch_metaforecast,

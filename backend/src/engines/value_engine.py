@@ -26,7 +26,7 @@ MIN_EDGE = 0.03  # 3 percentage points — actionable on low-fee platforms
 # Minimum number of platforms with data to compute consensus
 MIN_PLATFORMS = 2
 # Platforms where you can actually trade (others are reference only)
-TRADEABLE_PLATFORMS = {"polymarket", "kalshi"}
+TRADEABLE_PLATFORMS = {"polymarket", "kalshi", "smarkets", "predictit"}
 # All platforms count as sources for consensus computation
 # The value bet is flagged on a TRADEABLE platform when it deviates from consensus
 
