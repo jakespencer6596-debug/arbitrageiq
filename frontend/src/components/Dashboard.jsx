@@ -3,6 +3,7 @@ import ArbTable from './ArbTable'
 import DiscrepancyFeed from './DiscrepancyFeed'
 import MarketMap from './MarketMap'
 import LiveFeed from './LiveFeed'
+import PaywallOverlay from './PaywallOverlay'
 
 const CATEGORY_LABELS = {
   politics: { name: 'Politics', color: 'purple' },
@@ -38,6 +39,11 @@ export default function Dashboard({
   showLiveFeed,
   onToggleLiveFeed,
   onSelectOpportunity,
+  user,
+  isPremium,
+  premiumData,
+  onUpgrade,
+  onLogout,
 }) {
   const activeArbs = stats?.active_arbs ?? opportunities?.length ?? 0
   const activeDiscs = stats?.active_discrepancies ?? discrepancies?.length ?? 0
@@ -78,18 +84,41 @@ export default function Dashboard({
           </div>
 
           {/* Right side */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm">
-              <span
-                className={`w-2.5 h-2.5 rounded-full ${
-                  isConnected
-                    ? 'bg-green-500 animate-pulse-green'
-                    : 'bg-red-500'
-                }`}
-              />
-              <span className={`hidden sm:inline ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+          <div className="flex items-center gap-3">
+            {/* Connection status */}
+            <div className="flex items-center gap-1.5 text-sm">
+              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse-green' : 'bg-red-500'}`} />
+              <span className={`hidden sm:inline text-xs ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
                 {isConnected ? 'Live' : 'Offline'}
               </span>
+            </div>
+
+            {/* Subscription badge */}
+            {isPremium ? (
+              <span className="text-[10px] bg-green-500/15 text-green-400 border border-green-500/20 px-2 py-0.5 rounded font-bold">
+                PREMIUM
+              </span>
+            ) : (
+              <button
+                onClick={onUpgrade}
+                className="text-[10px] bg-orange-500/15 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded font-bold hover:bg-orange-500/25 transition-colors"
+              >
+                UPGRADE
+              </button>
+            )}
+
+            {/* User menu */}
+            <div className="flex items-center gap-2">
+              <span className="hidden sm:inline text-xs text-gray-500 truncate max-w-[120px]">{user?.email}</span>
+              <button
+                onClick={onLogout}
+                className="text-xs text-gray-600 hover:text-gray-300 transition-colors"
+                title="Log out"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
             </div>
           </div>
         </div>
@@ -127,11 +156,27 @@ export default function Dashboard({
               opportunities={opportunities}
               onSelectOpportunity={onSelectOpportunity}
             />
+            {/* Paywall for free users when there are hidden arbs */}
+            {!isPremium && premiumData.blurred_count > 0 && (
+              <div className="mt-2 rounded-xl border border-gray-800 overflow-hidden">
+                <PaywallOverlay count={premiumData.blurred_count} onUpgrade={onUpgrade} />
+              </div>
+            )}
           </div>
 
           {/* Right - Discrepancy Feed (1/3) */}
           <div className="lg:col-span-1">
-            <DiscrepancyFeed discrepancies={discrepancies} stats={stats} />
+            {isPremium ? (
+              <DiscrepancyFeed discrepancies={discrepancies} stats={stats} />
+            ) : (
+              <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg shadow-black/20 overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-800">
+                  <h2 className="text-lg font-semibold text-gray-100">Discrepancies</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">Market prices vs. forecaster consensus</p>
+                </div>
+                <PaywallOverlay count={3} onUpgrade={onUpgrade} />
+              </div>
+            )}
           </div>
         </div>
 

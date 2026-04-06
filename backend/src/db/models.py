@@ -12,6 +12,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+from sqlalchemy import UniqueConstraint
+
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'arbitrageiq.db')
 DATABASE_URL = f"sqlite:///{os.path.abspath(DB_PATH)}"
 
@@ -26,6 +28,19 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+class User(Base):
+    """User accounts for authentication and subscription management."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False, unique=True)
+    password_hash = Column(String, nullable=False)
+    subscription_tier = Column(String, default="free")  # free, daily, weekly, monthly
+    subscription_expires_at = Column(DateTime, nullable=True)
+    stripe_customer_id = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class MarketPrice(Base):

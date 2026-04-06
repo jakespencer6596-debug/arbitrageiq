@@ -2,12 +2,39 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const WS_BASE = API_BASE.replace(/^http/, 'ws')
 
+// Auth token management
+let _token = localStorage.getItem('aiq_token') || null
+
+export function setToken(token) {
+  _token = token
+  if (token) {
+    localStorage.setItem('aiq_token', token)
+  } else {
+    localStorage.removeItem('aiq_token')
+  }
+}
+
+export function getToken() {
+  return _token
+}
+
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  })
+  const headers = { 'Content-Type': 'application/json', ...options.headers }
+
+  // Attach auth token if available
+  if (_token) {
+    headers['Authorization'] = `Bearer ${_token}`
+  }
+
+  const res = await fetch(url, { headers, ...options })
+
+  if (res.status === 401) {
+    // Token expired or invalid — clear and let app handle redirect
+    setToken(null)
+    throw new Error('Session expired. Please log in again.')
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(`API ${res.status}: ${text}`)
@@ -16,6 +43,21 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  // Auth
+  register: (email, password) =>
+    request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  login: (email, password) =>
+    request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  getMe: () => request('/api/auth/me'),
+  getPricing: () => request('/api/auth/pricing'),
+
+  // Data
   getSnapshot: () => request('/api/snapshot'),
   getOpportunities: () => request('/api/opportunities'),
   getMarkets: () => request('/api/markets'),
@@ -27,10 +69,6 @@ export const api = {
     request('/api/category', {
       method: 'POST',
       body: JSON.stringify({ category }),
-    }),
-  testAlert: () =>
-    request('/api/alerts/test', {
-      method: 'POST',
     }),
 }
 
@@ -58,9 +96,7 @@ export function createWebSocket(onMessage) {
       }
     }
 
-    ws.onerror = () => {
-      // error handled on close
-    }
+    ws.onerror = () => {}
 
     ws.onclose = () => {
       onMessage({ type: 'ws_disconnected' })

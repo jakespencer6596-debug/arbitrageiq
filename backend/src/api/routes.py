@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, Request
 from sqlalchemy import func
 
 import constants
@@ -30,11 +30,135 @@ from db.models import (
     SessionLocal,
     SystemStatus,
     TrackedMarket,
+    User,
+)
+from auth.auth import (
+    hash_password, verify_password, create_token,
+    get_current_user, get_optional_user,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/auth/register")
+async def register(body: dict):
+    """Register a new user with email + password."""
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password", "")
+
+    if not email or "@" not in email:
+        return {"error": "Valid email required"}, 400
+    if len(password) < 6:
+        return {"error": "Password must be at least 6 characters"}, 400
+
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == email).first()
+        if existing:
+            return {"error": "Email already registered"}
+
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            subscription_tier="free",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        token = create_token(user.id, user.email)
+        return {
+            "token": token,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "subscription_tier": user.subscription_tier,
+                "subscription_expires_at": None,
+            },
+        }
+    finally:
+        db.close()
+
+
+@router.post("/auth/login")
+async def login(body: dict):
+    """Login with email + password, returns JWT."""
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password", "")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user or not verify_password(password, user.password_hash):
+            return {"error": "Invalid email or password"}
+
+        # Check if subscription is still active
+        tier = user.subscription_tier
+        if tier != "free" and user.subscription_expires_at:
+            if user.subscription_expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
+                tier = "free"
+                user.subscription_tier = "free"
+                db.commit()
+
+        token = create_token(user.id, user.email)
+        return {
+            "token": token,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "subscription_tier": tier,
+                "subscription_expires_at": user.subscription_expires_at.isoformat() if user.subscription_expires_at else None,
+            },
+        }
+    finally:
+        db.close()
+
+
+@router.get("/auth/me")
+async def get_me(request: Request):
+    """Get current user profile from JWT."""
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == payload["user_id"]).first()
+        if not user:
+            return {"error": "User not found"}
+
+        tier = user.subscription_tier
+        if tier != "free" and user.subscription_expires_at:
+            if user.subscription_expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
+                tier = "free"
+                user.subscription_tier = "free"
+                db.commit()
+
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "subscription_tier": tier,
+                "subscription_expires_at": user.subscription_expires_at.isoformat() if user.subscription_expires_at else None,
+            },
+        }
+    finally:
+        db.close()
+
+
+@router.get("/auth/pricing")
+async def get_pricing():
+    """Return subscription pricing info."""
+    return {
+        "plans": [
+            {"key": "daily", "name": "Day Pass", "price": 9.99, "interval": "day", "label": "Try it out"},
+            {"key": "weekly", "name": "Weekly", "price": 49.99, "interval": "week", "label": "Most Popular", "popular": True},
+            {"key": "monthly", "name": "Monthly", "price": 98.99, "interval": "month", "label": "Best Value"},
+        ],
+    }
+
 
 # ---------------------------------------------------------------------------
 # In-memory snapshot cache for instant first load
@@ -319,14 +443,25 @@ async def debug_prices():
 
 
 @router.get("/opportunities")
-async def get_opportunities(limit: int = Query(50, ge=1, le=200)):
+async def get_opportunities(request: Request, limit: int = Query(50, ge=1, le=200)):
     """
     Return active arbitrage opportunities and discrepancies.
-
-    Arb opportunities are sorted by profit_pct descending (best first).
-    Discrepancies are sorted by edge_pct descending (largest edge first).
-    Only active rows are included.
+    Free users get limited data (first 2 arbs, no discrepancies).
+    Premium users get everything.
     """
+    # Check auth — allow unauthenticated with limited data
+    user_data = get_optional_user(request)
+    is_premium = False
+    if user_data:
+        db_check = SessionLocal()
+        try:
+            user = db_check.query(User).filter(User.id == user_data["user_id"]).first()
+            if user and user.subscription_tier != "free":
+                if user.subscription_expires_at and user.subscription_expires_at >= datetime.now(timezone.utc).replace(tzinfo=None):
+                    is_premium = True
+        finally:
+            db_check.close()
+
     db = SessionLocal()
     try:
         arbs = (
@@ -337,18 +472,32 @@ async def get_opportunities(limit: int = Query(50, ge=1, le=200)):
             .all()
         )
 
-        discs = (
-            db.query(Discrepancy)
-            .filter(Discrepancy.is_active == True)  # noqa: E712
-            .order_by(Discrepancy.edge_pct.desc())
-            .limit(limit)
-            .all()
-        )
+        all_arbs = [_row_to_dict(a) for a in arbs]
 
-        return {
-            "arb": [_row_to_dict(a) for a in arbs],
-            "discrepancies": [_row_to_dict(d) for d in discs],
-        }
+        if is_premium:
+            discs = (
+                db.query(Discrepancy)
+                .filter(Discrepancy.is_active == True)  # noqa: E712
+                .order_by(Discrepancy.edge_pct.desc())
+                .limit(limit)
+                .all()
+            )
+            return {
+                "arb": all_arbs,
+                "discrepancies": [_row_to_dict(d) for d in discs],
+                "premium": True,
+            }
+        else:
+            # Free tier: show first 2 arbs, blur the rest
+            visible = all_arbs[:2]
+            blurred_count = max(0, len(all_arbs) - 2)
+            return {
+                "arb": visible,
+                "discrepancies": [],
+                "premium": False,
+                "blurred_count": blurred_count,
+                "total_count": len(all_arbs),
+            }
     finally:
         db.close()
 
