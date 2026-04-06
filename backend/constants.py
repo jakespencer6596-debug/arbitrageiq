@@ -65,6 +65,11 @@ PLATFORM_FEES = {
         "withdrawal_fee": 0.00,
         "profit_fee": 0.02,      # 2% commission on net winnings
     },
+    "sxbet": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.02,      # 2% commission
+    },
 }
 
 # ---------------------------------------------------------------------------

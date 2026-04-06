@@ -178,6 +178,20 @@ async def fetch_manifold() -> None:
         logger.error(f"fetch_manifold failed: {exc}", exc_info=True)
 
 
+async def fetch_sxbet() -> None:
+    """Fetch prediction market data from SX Bet decentralized exchange."""
+    try:
+        from ingestion.sxbet import SXBetClient
+
+        client = SXBetClient()
+        results = await client.fetch()
+        logger.info(f"fetch_sxbet: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_sxbet: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_sxbet failed: {exc}", exc_info=True)
+
+
 async def fetch_smarkets() -> None:
     """Fetch prediction market data from Smarkets exchange."""
     try:
@@ -824,6 +838,16 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         next_run_time=_now + timedelta(seconds=45),
+    )
+    _scheduler.add_job(
+        fetch_sxbet,
+        "interval",
+        seconds=300,
+        id="fetch_sxbet",
+        name="SX Bet exchange",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=75),
     )
     _scheduler.add_job(
         fetch_metaforecast,

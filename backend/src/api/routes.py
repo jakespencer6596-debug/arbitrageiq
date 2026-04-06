@@ -458,9 +458,9 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
 async def _trigger_fetch_cycle():
     """Fire all ingestion jobs for the active category, then run arb detection."""
     import asyncio
-    from scheduler import fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds, fetch_metaforecast, fetch_smarkets, run_arb  # noqa: E501
+    from scheduler import fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds, fetch_metaforecast, fetch_smarkets, fetch_sxbet, run_arb  # noqa: E501
 
-    jobs = [fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_smarkets, fetch_metaforecast, fetch_odds]
+    jobs = [fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_smarkets, fetch_sxbet, fetch_metaforecast, fetch_odds]
     for job in jobs:
         try:
             await job()
