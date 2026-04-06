@@ -213,17 +213,27 @@ class KalshiClient:
                         event_ticker = mkt.get("event_ticker", "")
 
                         # Skip multi-leg parlay markets (KXMVE) — titles are garbage
-                        if event_ticker.startswith("KXMVE"):
+                        if "KXMVE" in (event_ticker or "").upper():
                             continue
 
                         title = mkt.get("title", "")
-                        # Use subtitle if title looks like concatenated outcomes
+                        # Try to get a clean title from various fields
                         if title.startswith("yes ") or title.startswith("no "):
-                            subtitle = mkt.get("yes_sub_title", "") or mkt.get("subtitle", "")
-                            if subtitle and not subtitle.startswith("yes "):
-                                title = subtitle
+                            # Try subtitle, yes_sub_title, or construct from event_ticker
+                            for alt_field in ["subtitle", "yes_sub_title", "no_sub_title"]:
+                                alt = mkt.get(alt_field, "")
+                                if alt and not alt.startswith("yes ") and not alt.startswith("no "):
+                                    title = alt
+                                    break
                             else:
-                                continue  # Skip — no usable title
+                                # Last resort: use event_ticker as title (e.g., "KXNBAGAME-26APR05CHAMIN")
+                                if event_ticker and not event_ticker.startswith("KXMVE"):
+                                    title = event_ticker.replace("-", " ")
+                                else:
+                                    continue
+
+                        if not title or len(title) < 5:
+                            continue
 
                         yes_prob = self._yes_probability(mkt)
                         no_prob = 1.0 - yes_prob

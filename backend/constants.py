@@ -14,7 +14,7 @@ ODDS_API_KEY = os.getenv("ODDS_API_KEY", "bdc9181d902b5410bd4cff7066945065")
 
 # URLs
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
-KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+KALSHI_API_BASE = "https://trading-api.kalshi.com/trade-api/v2"
 KALSHI_WS_BASE = "wss://api.elections.kalshi.com/trade-api/v2/ws/v2"
 POLYMARKET_API_URL = os.getenv("POLYMARKET_API_URL", "https://gamma-api.polymarket.com")
 PREDICTIT_API_URL = os.getenv("PREDICTIT_API_URL", "https://www.predictit.org/api/marketdata/all/")

@@ -297,9 +297,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if implied_prob <= 0.01 or implied_prob >= 0.99:
             continue  # Skip extreme prices (noise)
 
-        # Skip PredictIt — 15% combined fees make arbs unprofitable
-        if source.lower().strip() == "predictit":
-            continue
+        # PredictIt has 15% combined fees — arbs are shown with fee warnings
+        # but NOT excluded, as users may have mitigation strategies
 
         if raw_odds and raw_odds > 0:
             decimal_odds = raw_odds
@@ -448,9 +447,8 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         net_profit = net1 + net2
         net_profit_pct = net_profit / base_stake if base_stake > 0 else 0
 
-        # Skip arbs that are unprofitable after fees
-        if net_profit_pct < 0.001:
-            continue
+        # Show all arbs — even if fees eat the profit, users need to see them
+        # The UI will show gross vs net so users can decide
 
         fee_info_cheap = _get_fee_info(cheap["source"])
         fee_info_expensive = _get_fee_info(expensive["source"])

@@ -151,9 +151,17 @@ async def fetch_polymarket() -> None:
 
 
 async def fetch_predictit() -> None:
-    """PredictIt disabled — 15% fees make arbs unprofitable, CFTC license revoked."""
-    logger.debug("fetch_predictit: disabled (fees too high, platform winding down)")
-    return
+    """Fetch latest PredictIt prediction-market data."""
+    try:
+        from ingestion.predictit import PredictItClient
+
+        client = PredictItClient()
+        results = await client.fetch()
+        logger.info(f"fetch_predictit: ingested {len(results)} price snapshots")
+    except ImportError:
+        logger.warning("fetch_predictit: ingestion.predictit not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_predictit failed: {exc}", exc_info=True)
 
 
 async def fetch_manifold() -> None:
