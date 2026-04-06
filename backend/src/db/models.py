@@ -1,6 +1,6 @@
 """
 Database models for ArbitrageIQ.
-Uses SQLite via SQLAlchemy — no external DB needed.
+Uses PostgreSQL on Render for persistent storage, falls back to SQLite locally.
 """
 
 import os
@@ -14,17 +14,29 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 from sqlalchemy import UniqueConstraint
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'arbitrageiq.db')
-DATABASE_URL = f"sqlite:///{os.path.abspath(DB_PATH)}"
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    echo=False,
-    pool_pre_ping=True,
-    pool_size=2,
-    max_overflow=1,
-)
+# Use PostgreSQL if DATABASE_URL is set (Render), otherwise fall back to SQLite
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL:
+    # Render provides postgres:// but SQLAlchemy needs postgresql://
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=3,
+        max_overflow=2,
+    )
+else:
+    DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'arbitrageiq.db')
+    DATABASE_URL = f"sqlite:///{os.path.abspath(DB_PATH)}"
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=2,
+        max_overflow=1,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -174,14 +186,15 @@ class SystemStatus(Base):
 
 
 def init_db():
-    """Create all tables and enable WAL mode for lower memory + better concurrency."""
+    """Create all tables. SQLite gets WAL mode, PostgreSQL uses defaults."""
     Base.metadata.create_all(bind=engine)
-    # WAL mode uses less memory and allows concurrent reads during writes
-    with engine.connect() as conn:
-        conn.execute(text("PRAGMA journal_mode=WAL"))
-        conn.execute(text("PRAGMA synchronous=NORMAL"))
-        conn.execute(text("PRAGMA cache_size=-8000"))  # 8 MB cache max
-        conn.commit()
+    is_sqlite = "sqlite" in str(engine.url)
+    if is_sqlite:
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA synchronous=NORMAL"))
+            conn.execute(text("PRAGMA cache_size=-8000"))
+            conn.commit()
 
 
 def get_session():
@@ -231,10 +244,15 @@ def cleanup_old_data(max_age_hours: int = 6, max_per_source: int = 500):
 
         db.commit()
 
-        # Vacuum to reclaim space
-        with engine.connect() as conn:
-            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
-            conn.commit()
+        # Vacuum/checkpoint — only for SQLite
+        is_sqlite = "sqlite" in str(engine.url)
+        if is_sqlite:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+                    conn.commit()
+            except Exception:
+                pass
 
         return {"prices": old_prices, "arbs": old_arbs, "discrepancies": old_discs}
     except Exception:
