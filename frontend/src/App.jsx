@@ -4,6 +4,7 @@ import Dashboard from './components/Dashboard'
 import StakeCalculator from './components/StakeCalculator'
 import CategorySelector from './components/CategorySelector'
 import LoginPage from './components/LoginPage'
+import LandingPage from './components/LandingPage'
 import PricingPage from './components/PricingPage'
 import PaywallOverlay from './components/PaywallOverlay'
 import AdminDashboard from './components/AdminDashboard'
@@ -182,9 +183,14 @@ export default function App() {
     )
   }
 
-  // Not logged in
+  // Not logged in — show landing page
   if (!user) {
-    return <LoginPage onAuth={handleAuth} />
+    return (
+      <LandingPage
+        onLogin={(email, pw) => handleAuth('login', email, pw)}
+        onSignUp={(email, pw) => handleAuth('register', email, pw)}
+      />
+    )
   }
 
   // Category selector

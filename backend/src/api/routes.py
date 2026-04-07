@@ -24,7 +24,9 @@ from sqlalchemy import func
 import constants
 from db.models import (
     ArbOpportunity,
+    ArbHistory,
     AlertLog,
+    BetLog,
     Discrepancy,
     MarketPrice,
     SessionLocal,
@@ -365,6 +367,227 @@ async def make_first_admin(body: dict):
         user.subscription_expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3650)
         db.commit()
         return {"status": "ok", "message": f"{email} is now admin with premium access"}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Alert Settings
+# ---------------------------------------------------------------------------
+
+@router.get("/alerts/settings")
+async def get_alert_settings(request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == payload["user_id"]).first()
+        if not user:
+            return {"error": "User not found"}
+        return {
+            "alerts_enabled": user.alerts_enabled,
+            "alert_min_profit": user.alert_min_profit,
+            "telegram_chat_id": user.telegram_chat_id or "",
+            "discord_webhook_url": user.discord_webhook_url or "",
+        }
+    finally:
+        db.close()
+
+
+@router.post("/alerts/settings")
+async def update_alert_settings(body: dict, request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == payload["user_id"]).first()
+        if not user:
+            return {"error": "User not found"}
+        if "alerts_enabled" in body:
+            user.alerts_enabled = bool(body["alerts_enabled"])
+        if "alert_min_profit" in body:
+            user.alert_min_profit = max(0.005, min(0.20, float(body["alert_min_profit"])))
+        if "discord_webhook_url" in body:
+            user.discord_webhook_url = body["discord_webhook_url"] or None
+        if "telegram_chat_id" in body:
+            user.telegram_chat_id = body["telegram_chat_id"] or None
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Bet Tracker
+# ---------------------------------------------------------------------------
+
+@router.post("/bets")
+async def create_bet(body: dict, request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        bet = BetLog(
+            user_id=payload["user_id"],
+            event_name=body.get("event_name", ""),
+            platform=body.get("platform", ""),
+            direction=body.get("direction", "YES"),
+            odds=body.get("odds", 0),
+            stake=body.get("stake", 0),
+            potential_payout=body.get("potential_payout", 0),
+            notes=body.get("notes", ""),
+        )
+        db.add(bet)
+        db.commit()
+        db.refresh(bet)
+        return {"status": "ok", "bet_id": bet.id}
+    finally:
+        db.close()
+
+
+@router.get("/bets")
+async def get_bets(request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        bets = (
+            db.query(BetLog)
+            .filter(BetLog.user_id == payload["user_id"])
+            .order_by(BetLog.placed_at.desc())
+            .limit(100)
+            .all()
+        )
+        return {
+            "bets": [
+                {
+                    "id": b.id,
+                    "event_name": b.event_name,
+                    "platform": b.platform,
+                    "direction": b.direction,
+                    "odds": b.odds,
+                    "stake": b.stake,
+                    "potential_payout": b.potential_payout,
+                    "status": b.status,
+                    "actual_payout": b.actual_payout,
+                    "profit_loss": b.profit_loss,
+                    "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+                    "resolved_at": b.resolved_at.isoformat() if b.resolved_at else None,
+                    "notes": b.notes,
+                }
+                for b in bets
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.put("/bets/{bet_id}")
+async def update_bet(bet_id: int, body: dict, request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        bet = db.query(BetLog).filter(BetLog.id == bet_id, BetLog.user_id == payload["user_id"]).first()
+        if not bet:
+            return {"error": "Bet not found"}
+        if "status" in body:
+            bet.status = body["status"]
+        if "actual_payout" in body:
+            bet.actual_payout = body["actual_payout"]
+            bet.profit_loss = bet.actual_payout - bet.stake
+            bet.resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
+
+
+@router.get("/bets/summary")
+async def bets_summary(request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        bets = db.query(BetLog).filter(BetLog.user_id == payload["user_id"]).all()
+        total = len(bets)
+        resolved = [b for b in bets if b.status in ("won", "lost")]
+        won = len([b for b in resolved if b.status == "won"])
+        total_staked = sum(b.stake or 0 for b in bets)
+        total_pl = sum(b.profit_loss or 0 for b in resolved)
+        return {
+            "total_bets": total,
+            "resolved": len(resolved),
+            "won": won,
+            "win_rate": round(won / len(resolved), 2) if resolved else 0,
+            "total_staked": round(total_staked, 2),
+            "total_profit_loss": round(total_pl, 2),
+            "roi": round(total_pl / total_staked, 4) if total_staked > 0 else 0,
+        }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# History & Analytics
+# ---------------------------------------------------------------------------
+
+@router.get("/history")
+async def get_history(request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        history = (
+            db.query(ArbHistory)
+            .order_by(ArbHistory.last_seen_at.desc())
+            .limit(100)
+            .all()
+        )
+        return {
+            "history": [
+                {
+                    "id": h.id,
+                    "event_name": h.event_name,
+                    "category": h.category,
+                    "arb_type": h.arb_type,
+                    "source_a": h.source_a,
+                    "source_b": h.source_b,
+                    "peak_profit_pct": h.peak_profit_pct,
+                    "net_profit_pct": h.net_profit_pct,
+                    "times_detected": h.times_detected,
+                    "first_detected": h.first_detected_at.isoformat() if h.first_detected_at else None,
+                    "last_seen": h.last_seen_at.isoformat() if h.last_seen_at else None,
+                    "duration_seconds": h.duration_seconds,
+                    "status": h.status,
+                }
+                for h in history
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.get("/analytics")
+async def get_analytics(request: Request):
+    payload = get_current_user(request)
+    db = SessionLocal()
+    try:
+        total_ever = db.query(func.count(ArbHistory.id)).scalar() or 0
+        active_now = db.query(func.count(ArbHistory.id)).filter(ArbHistory.status == "active").scalar() or 0
+        avg_profit = db.query(func.avg(ArbHistory.peak_profit_pct)).scalar() or 0
+        avg_duration = db.query(func.avg(ArbHistory.duration_seconds)).filter(ArbHistory.duration_seconds > 0).scalar() or 0
+
+        # Platform pair breakdown
+        pair_rows = (
+            db.query(ArbHistory.source_a, ArbHistory.source_b, func.count(ArbHistory.id))
+            .group_by(ArbHistory.source_a, ArbHistory.source_b)
+            .order_by(func.count(ArbHistory.id).desc())
+            .limit(10)
+            .all()
+        )
+        pairs = [{"a": a, "b": b, "count": c} for a, b, c in pair_rows]
+
+        return {
+            "total_arbs_ever": total_ever,
+            "active_now": active_now,
+            "avg_peak_profit": round(avg_profit * 100, 2) if avg_profit else 0,
+            "avg_duration_minutes": round(avg_duration / 60, 1) if avg_duration else 0,
+            "platform_pairs": pairs,
+        }
     finally:
         db.close()
 

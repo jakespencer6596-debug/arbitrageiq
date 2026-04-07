@@ -35,6 +35,7 @@ from constants import (
 )
 from db.models import (
     ArbOpportunity,
+    ArbHistory,
     Discrepancy,
     MarketPrice,
     SessionLocal,
@@ -387,6 +388,45 @@ async def run_arb() -> None:
             )
             db.add(row)
             disc_count += 1
+
+        # 5. Track arb history for analytics
+        for opp in opportunities:
+            d = opp.to_dict() if hasattr(opp, 'to_dict') else opp
+            legs = d.get("legs", [])
+            sources = [l.get("source", "") for l in legs[:2] if isinstance(l, dict)]
+            src_a = sources[0] if len(sources) > 0 else ""
+            src_b = sources[1] if len(sources) > 1 else ""
+            event_key = d.get("event_name", "")[:100]
+
+            existing = (
+                db.query(ArbHistory)
+                .filter(ArbHistory.event_name == event_key, ArbHistory.status == "active")
+                .first()
+            )
+            if existing:
+                existing.times_detected += 1
+                existing.last_seen_at = datetime.now(timezone.utc)
+                existing.duration_seconds = int((existing.last_seen_at - existing.first_detected_at).total_seconds())
+                if d.get("profit_pct", 0) > existing.peak_profit_pct:
+                    existing.peak_profit_pct = d.get("profit_pct", 0)
+                    existing.legs_json = d
+            else:
+                db.add(ArbHistory(
+                    event_name=event_key,
+                    category=d.get("category", ""),
+                    arb_type=d.get("arb_type", "cross_platform"),
+                    source_a=src_a,
+                    source_b=src_b,
+                    peak_profit_pct=d.get("profit_pct", 0),
+                    net_profit_pct=d.get("net_profit_pct", 0),
+                    legs_json=d,
+                ))
+
+        # Expire old history entries that weren't seen this cycle
+        db.query(ArbHistory).filter(
+            ArbHistory.status == "active",
+            ArbHistory.last_seen_at < datetime.now(timezone.utc) - timedelta(minutes=5),
+        ).update({"status": "expired"})
 
         db.commit()
         logger.info(f"run_arb: saved {saved_count} arbs + {disc_count} discrepancies to DB")

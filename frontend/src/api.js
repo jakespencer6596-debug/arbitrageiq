@@ -76,6 +76,22 @@ export const api = {
       body: JSON.stringify({ email, secret }),
     }),
 
+  // Alerts
+  getAlertSettings: () => request('/api/alerts/settings'),
+  updateAlertSettings: (settings) =>
+    request('/api/alerts/settings', { method: 'POST', body: JSON.stringify(settings) }),
+
+  // Bets
+  createBet: (bet) => request('/api/bets', { method: 'POST', body: JSON.stringify(bet) }),
+  getBets: () => request('/api/bets'),
+  updateBet: (betId, data) =>
+    request(`/api/bets/${betId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getBetsSummary: () => request('/api/bets/summary'),
+
+  // History & Analytics
+  getHistory: () => request('/api/history'),
+  getAnalytics: () => request('/api/analytics'),
+
   // Data
   getSnapshot: () => request('/api/snapshot'),
   getOpportunities: () => request('/api/opportunities'),

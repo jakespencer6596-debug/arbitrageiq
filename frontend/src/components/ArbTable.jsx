@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'
+import ArbCard from './ArbCard'
 
 /**
  * Generate a URL for a given betting platform / bookmaker.
@@ -172,8 +173,19 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
           </p>
         </div>
       ) : (
-        /* Table */
-        <div className="overflow-x-auto">
+        <>
+        {/* Mobile: card layout */}
+        <div className="md:hidden p-4 space-y-3">
+          {paginatedRows.map((opp) => (
+            <ArbCard
+              key={opp.id || `${opp.event_name}-${opp.profit_pct}`}
+              opp={opp}
+              onClick={() => onSelectOpportunity(opp)}
+            />
+          ))}
+        </div>
+        {/* Desktop: table layout */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800">
@@ -355,6 +367,7 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Pagination controls */}

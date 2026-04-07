@@ -53,6 +53,10 @@ class User(Base):
     subscription_tier = Column(String, default="free")  # free, daily, weekly, monthly
     subscription_expires_at = Column(DateTime, nullable=True)
     stripe_customer_id = Column(String, nullable=True)
+    telegram_chat_id = Column(String, nullable=True)
+    discord_webhook_url = Column(String, nullable=True)
+    alert_min_profit = Column(Float, default=0.02)
+    alerts_enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -184,6 +188,46 @@ class SystemStatus(Base):
     consecutive_failures = Column(Integer, default=0)
     metadata_ = Column("metadata", JSON, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ArbHistory(Base):
+    """Historical record of every arb detected, with duration and frequency."""
+    __tablename__ = "arb_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_name = Column(String, nullable=False)
+    category = Column(String)
+    arb_type = Column(String, default="cross_platform")
+    source_a = Column(String)
+    source_b = Column(String)
+    peak_profit_pct = Column(Float, default=0)
+    net_profit_pct = Column(Float, default=0)
+    times_detected = Column(Integer, default=1)
+    first_detected_at = Column(DateTime, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    duration_seconds = Column(Integer, default=0)
+    status = Column(String, default="active")  # active, expired
+    legs_json = Column(JSON, nullable=True)
+
+
+class BetLog(Base):
+    """User bet tracking for P&L."""
+    __tablename__ = "bet_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False)
+    event_name = Column(String)
+    platform = Column(String)
+    direction = Column(String)  # YES or NO
+    odds = Column(Float)
+    stake = Column(Float)
+    potential_payout = Column(Float)
+    status = Column(String, default="pending")  # pending, won, lost, void
+    actual_payout = Column(Float, nullable=True)
+    profit_loss = Column(Float, nullable=True)
+    placed_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
 
 
 def init_db():
