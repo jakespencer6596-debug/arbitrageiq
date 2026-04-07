@@ -102,6 +102,24 @@ def _build_market_url(source: str, market_id: str, event_name: str,
         if name in src:
             return url
 
+    # Smarkets
+    if src == "smarkets":
+        if metadata_ and isinstance(metadata_, dict):
+            url = metadata_.get("url", "")
+            if url:
+                return url
+        return "https://smarkets.com"
+
+    # SX Bet
+    if src == "sxbet":
+        return "https://sx.bet"
+
+    # Metaforecast sources — use URL from metadata if available
+    if metadata_ and isinstance(metadata_, dict):
+        url = metadata_.get("url", "")
+        if url:
+            return url
+
     return ""
 
 

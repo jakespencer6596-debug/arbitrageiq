@@ -99,9 +99,14 @@ async def login(body: dict):
         if not user or not verify_password(password, user.password_hash):
             return {"error": "Invalid email or password"}
 
-        # Check if subscription is still active
-        tier = user.subscription_tier
-        if tier != "free" and user.subscription_expires_at:
+        # Default None fields from pre-migration rows
+        role = user.role or "user"
+        tier = user.subscription_tier or "free"
+
+        # Admins/employees always premium
+        if role in ("admin", "employee"):
+            tier = user.subscription_tier if user.subscription_tier and user.subscription_tier != "free" else "monthly"
+        elif tier != "free" and user.subscription_expires_at:
             if user.subscription_expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
                 tier = "free"
                 user.subscription_tier = "free"
@@ -113,6 +118,7 @@ async def login(body: dict):
             "user": {
                 "id": user.id,
                 "email": user.email,
+                "role": role,
                 "subscription_tier": tier,
                 "subscription_expires_at": user.subscription_expires_at.isoformat() if user.subscription_expires_at else None,
             },
@@ -131,8 +137,13 @@ async def get_me(request: Request):
         if not user:
             return {"error": "User not found"}
 
-        tier = user.subscription_tier
-        if tier != "free" and user.subscription_expires_at:
+        role = user.role or "user"
+        tier = user.subscription_tier or "free"
+
+        # Admins/employees always premium
+        if role in ("admin", "employee"):
+            tier = user.subscription_tier if user.subscription_tier and user.subscription_tier != "free" else "monthly"
+        elif tier != "free" and user.subscription_expires_at:
             if user.subscription_expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
                 tier = "free"
                 user.subscription_tier = "free"
@@ -142,7 +153,7 @@ async def get_me(request: Request):
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "role": user.role or "user",
+                "role": role,
                 "subscription_tier": tier,
                 "subscription_expires_at": user.subscription_expires_at.isoformat() if user.subscription_expires_at else None,
             },
@@ -889,11 +900,12 @@ async def get_opportunities(request: Request, limit: int = Query(50, ge=1, le=20
         try:
             user = db_check.query(User).filter(User.id == user_data["user_id"]).first()
             if user:
-                # Admins and employees always get premium
-                if user.role in ("admin", "employee"):
+                role = user.role or "user"
+                tier = user.subscription_tier or "free"
+                if role in ("admin", "employee"):
                     is_premium = True
-                elif user.subscription_tier != "free":
-                    if user.subscription_expires_at and user.subscription_expires_at >= datetime.now(timezone.utc).replace(tzinfo=None):
+                elif tier not in (None, "", "free"):
+                    if not user.subscription_expires_at or user.subscription_expires_at >= datetime.now(timezone.utc).replace(tzinfo=None):
                         is_premium = True
         finally:
             db_check.close()

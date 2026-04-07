@@ -133,6 +133,10 @@ class SmarketsClient:
                     full_name = f"{event_name}: {contract_name}" if event_name != market_name else f"{market_name}: {contract_name}"
                     category = categorise(full_name)
 
+                    # Override: if we fetched from political parent IDs, force politics
+                    if constants.ACTIVE_CATEGORY == "politics":
+                        category = "politics"
+
                     results.append({
                         "source": "smarkets",
                         "market_id": f"{market_id}_{contract_id}",

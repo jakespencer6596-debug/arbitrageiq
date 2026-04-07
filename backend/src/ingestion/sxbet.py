@@ -65,6 +65,29 @@ class SXBetClient:
             logger.info("SX Bet: no active category — skipping")
             return []
 
+        # Circuit breaker: if 10+ consecutive failures, skip
+        try:
+            db = SessionLocal()
+            status = db.query(SystemStatus).filter(SystemStatus.source == "sxbet").first()
+            if status and (status.consecutive_failures or 0) >= 10:
+                logger.debug("SX Bet: circuit breaker active, skipping")
+                # Reset after 1 hour
+                if status.last_failure_at:
+                    from datetime import timedelta
+                    if datetime.now(timezone.utc) - status.last_failure_at.replace(tzinfo=timezone.utc) > timedelta(hours=1):
+                        status.consecutive_failures = 0
+                        db.commit()
+                        logger.info("SX Bet: circuit breaker reset after 1 hour")
+                    else:
+                        db.close()
+                        return []
+                else:
+                    db.close()
+                    return []
+            db.close()
+        except Exception:
+            pass
+
         # Get sport ID for active category
         sport_id = SPORT_ID_MAP.get(constants.ACTIVE_CATEGORY)
         if sport_id is None:
