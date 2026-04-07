@@ -231,7 +231,7 @@ class BetLog(Base):
 
 
 def init_db():
-    """Create all tables. SQLite gets WAL mode, PostgreSQL uses defaults."""
+    """Create all tables and run migrations for new columns."""
     Base.metadata.create_all(bind=engine)
     is_sqlite = "sqlite" in str(engine.url)
     if is_sqlite:
@@ -240,6 +240,31 @@ def init_db():
             conn.execute(text("PRAGMA synchronous=NORMAL"))
             conn.execute(text("PRAGMA cache_size=-8000"))
             conn.commit()
+
+    # Migration: add columns that may be missing on existing PostgreSQL tables
+    _run_migrations()
+
+
+def _run_migrations():
+    """Add missing columns to existing tables (safe to run repeatedly)."""
+    migrations = [
+        # User table new columns
+        ("users", "role", "VARCHAR DEFAULT 'user'"),
+        ("users", "telegram_chat_id", "VARCHAR"),
+        ("users", "discord_webhook_url", "VARCHAR"),
+        ("users", "alert_min_profit", "FLOAT DEFAULT 0.02"),
+        ("users", "alerts_enabled", "BOOLEAN DEFAULT TRUE"),
+        # ArbHistory table (may not exist)
+        # BetLog table (may not exist)
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+            except Exception:
+                # Column already exists or table doesn't exist — safe to ignore
+                conn.rollback()
 
 
 def get_session():
