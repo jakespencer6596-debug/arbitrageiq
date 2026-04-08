@@ -13,7 +13,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from dataclasses import dataclass, field
-from constants import MIN_ARB_PROFIT_PCT, PLATFORM_FEES
+from constants import MIN_ARB_PROFIT_PCT, PLATFORM_FEES, is_tradeable_source
 
 
 def _get_fee_info(source: str) -> dict:
@@ -252,35 +252,7 @@ MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
 # Only TRADEABLE platforms can form arb legs. Reference platforms
 # feed into value signals/discrepancies but NOT arb detection.
 # ---------------------------------------------------------------------------
-TRADEABLE_SOURCES = frozenset({
-    "polymarket", "kalshi", "predictit", "smarkets", "sxbet",
-    "betfair", "matchbook", "cloudbet", "opinion",
-    "futuur", "insight", "azuro", "limitless", "drift",
-    # Odds API sportsbooks
-    "draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
-    "betrivers", "bovada", "bet365", "pinnacle",
-    # Odds API IO bookmakers
-    "odds_api", "odds_api_io",
-})
-
-REFERENCE_SOURCES = frozenset({
-    "manifold", "metaculus", "gjopen", "infer", "fantasyscotus",
-    "givewellopenphil", "foretold", "hypermind", "metaforecast",
-    # Metaforecast sub-sources (stored with _mf suffix sometimes)
-    "metaculus_mf", "gjopen_mf", "infer_mf", "fantasyscotus_mf",
-    "givewellopenphil_mf", "foretold_mf", "hypermind_mf",
-})
-
-def _is_tradeable(source: str) -> bool:
-    """Check if a source is a real-money tradeable platform."""
-    src = source.lower().strip()
-    if src in TRADEABLE_SOURCES:
-        return True
-    # Check substring match for sportsbook variants like "draftkings_h2h"
-    for t in TRADEABLE_SOURCES:
-        if t in src:
-            return True
-    return False
+_is_tradeable = is_tradeable_source  # Use shared constant from constants.py
 
 
 def _bigram_similarity(name_a: str, name_b: str) -> float:
@@ -601,7 +573,7 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         fresh_score = max(0.0, 1.0 - (freshness / 1800.0))
 
         # Platform reliability — real-money platforms score higher
-        _RELIABLE = {"polymarket", "kalshi", "smarkets", "betfair", "predictit"}
+        _RELIABLE = {"polymarket", "kalshi", "sxbet", "opinion", "draftkings", "fanduel"}
         both_reliable = cheap["source"] in _RELIABLE and expensive["source"] in _RELIABLE
         reliability_score = 1.0 if both_reliable else 0.6
 
@@ -854,11 +826,7 @@ def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[Ar
         if source in ("polymarket",):
             continue
 
-        # Extract the parent market ID (before "_" for PredictIt)
-        if source == "predictit" and "_" in market_id:
-            parent_id = market_id.split("_")[0]
-        else:
-            parent_id = market_id
+        parent_id = market_id
 
         group_key = f"{source}:{parent_id}"
         market_groups[group_key].append({
@@ -880,8 +848,7 @@ def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[Ar
         total_prob = sum(c["implied_prob"] for c in contracts)
 
         # If total > 1.0, selling all contracts gives guaranteed profit
-        # PredictIt has 15% fees, so need higher overround to be profitable
-        min_overround = 1.20 if contracts[0]["source"] == "predictit" else 1.05
+        min_overround = 1.05
         if total_prob > min_overround:
             overround = total_prob - 1.0
             profit_pct = overround / total_prob  # ROI on total capital needed
@@ -925,6 +892,15 @@ def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[Ar
                 total_fees += trade_cost + profit_fee + wd_fee
             net = gross - total_fees
             net_pct = net / base_stake if base_stake > 0 else 0
+
+            # Cap overround profit at MAX_PROFIT_PCT — extreme overrounds
+            # on thin markets (e.g. PredictIt with many illiquid contracts)
+            # are mathematically real but practically unexecutable
+            if net_pct > MAX_PROFIT_PCT:
+                net_pct = MAX_PROFIT_PCT
+                profit_pct = min(profit_pct, MAX_PROFIT_PCT)
+                net = base_stake * net_pct
+                gross = base_stake * profit_pct
 
             if net_pct > 0.005:  # 0.5% minimum to be worth the effort
                 results.append(ArbOpportunityResult(

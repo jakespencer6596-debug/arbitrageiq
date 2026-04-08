@@ -4,14 +4,14 @@ import { api } from '../api'
 const PLATFORMS = [
   { name: 'Polymarket', color: '#8B5CF6' },
   { name: 'Kalshi', color: '#3B82F6' },
-  { name: 'Smarkets', color: '#10B981' },
-  { name: 'PredictIt', color: '#EAB308' },
-  { name: 'Metaculus', color: '#06B6D4' },
-  { name: 'Betfair', color: '#F97316' },
-  { name: 'Manifold', color: '#EC4899' },
   { name: 'SX Bet', color: '#14B8A6' },
-  { name: 'GJOpen', color: '#8B5CF6' },
-  { name: 'INFER', color: '#6366F1' },
+  { name: 'Futuur', color: '#06B6D4' },
+  { name: 'Insight', color: '#EC4899' },
+  { name: 'Azuro', color: '#8B5CF6' },
+  { name: 'Limitless', color: '#10B981' },
+  { name: 'Drift', color: '#6366F1' },
+  { name: 'DraftKings', color: '#F97316' },
+  { name: 'FanDuel', color: '#3B82F6' },
 ]
 
 const FEATURES = [
@@ -72,8 +72,8 @@ const FEATURES = [
 ]
 
 const FAQS = [
-  { q: 'What is prediction market arbitrage?', a: 'When the same event is priced differently on two prediction markets, you can bet both sides for a guaranteed profit regardless of the outcome. For example, if Polymarket says an event has a 40% chance and Smarkets says 50%, the price gap creates risk-free profit.' },
-  { q: 'Which platforms do you support?', a: 'We scan Polymarket, Kalshi, Smarkets, PredictIt, SX Bet, Manifold, plus 10+ additional sources via Metaforecast (including Metaculus, Betfair, GJOpen, INFER, and Hypermind).' },
+  { q: 'What is prediction market arbitrage?', a: 'When the same event is priced differently on two prediction markets, you can bet both sides for a guaranteed profit regardless of the outcome. For example, if Polymarket says an event has a 40% chance and Kalshi says 50%, the price gap creates risk-free profit.' },
+  { q: 'Which platforms do you support?', a: 'We scan 10+ real-money US-accessible platforms including Polymarket, Kalshi, SX Bet, Futuur, Insight, Azuro, Limitless, Drift, and Opinion — plus sportsbooks like DraftKings and FanDuel via Odds API.' },
   { q: 'How fast do arbs disappear?', a: 'Prediction market arbs typically last minutes to hours — much longer than sports arbs which last seconds. Our scanner checks every 2 minutes and alerts you instantly.' },
   { q: 'Is this legal?', a: 'Yes. Prediction market trading is legal in the US through CFTC-regulated platforms like Kalshi. Arbitrage is simply buying and selling at different prices — a standard trading strategy.' },
   { q: 'What does the free plan include?', a: 'Free users can see the first 2 opportunities and browse all market categories. Premium unlocks every opportunity, consensus signals, the execution calculator, alerts, and historical analytics.' },

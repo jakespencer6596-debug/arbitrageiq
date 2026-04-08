@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import re
 import logging
 from dataclasses import dataclass, field
-from constants import PLATFORM_FEES
+from constants import PLATFORM_FEES, is_tradeable_source
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,6 @@ logger = logging.getLogger(__name__)
 MIN_EDGE = 0.02  # 2 percentage points — lowered in Phase 3 for more signals
 # Minimum number of platforms with data to compute consensus
 MIN_PLATFORMS = 2
-# Platforms where you can actually trade (others are reference only)
-TRADEABLE_PLATFORMS = {"polymarket", "kalshi", "smarkets", "predictit", "sxbet", "opinion", "betfair", "matchbook"}
-# All platforms count as sources for consensus computation
-# The value bet is flagged on a TRADEABLE platform when it deviates from consensus
 
 
 def _get_fee_info(source: str) -> dict:
@@ -237,7 +233,7 @@ def detect_value_bets(market_prices: list) -> list[ValueBet]:
         # Check each tradeable platform against consensus
         for src, sp in source_prices.items():
             base_src = src.replace("_mf", "")  # remove metaforecast suffix
-            if base_src not in TRADEABLE_PLATFORMS:
+            if not is_tradeable_source(base_src):
                 continue
 
             edge = consensus - sp["prob"]

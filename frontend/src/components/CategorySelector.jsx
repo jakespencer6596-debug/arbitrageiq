@@ -173,7 +173,7 @@ export default function CategorySelector({ onSelectCategory }) {
 
       {/* Footer */}
       <p className="text-gray-600 text-xs mt-12">
-        Scanning Polymarket, Kalshi, PredictIt, Manifold Markets &amp; sportsbooks
+        Scanning Polymarket, Kalshi, SX Bet, Futuur, DraftKings &amp; 10+ exchanges
       </p>
     </div>
   )

@@ -27,8 +27,6 @@ from constants import (
     ODDS_API_POLL_SECONDS,
     KALSHI_POLL_SECONDS,
     POLYMARKET_POLL_SECONDS,
-    PREDICTIT_POLL_SECONDS,
-    MANIFOLD_POLL_SECONDS,
     KEEPALIVE_SECONDS,
     PRICE_MAX_AGE_HOURS,
     MAX_PRICES_PER_SOURCE,
@@ -67,26 +65,6 @@ def _build_market_url(source: str, market_id: str, event_name: str,
             return f"https://kalshi.com/markets/{market_id}"
         return "https://kalshi.com"
 
-    if src == "predictit":
-        # raw_payload may contain market_url
-        if raw_payload and isinstance(raw_payload, dict):
-            url = raw_payload.get("market_url")
-            if url:
-                return url
-        # Extract numeric market ID from composite "marketid_contractid"
-        parts = (market_id or "").split("_")
-        if parts and parts[0].isdigit():
-            return f"https://www.predictit.org/markets/detail/{parts[0]}"
-        return "https://www.predictit.org/markets"
-
-    if src == "manifold":
-        if metadata_ and isinstance(metadata_, dict):
-            url = metadata_.get("url")
-            if url:
-                return url
-        from urllib.parse import quote
-        return f"https://manifold.markets/search?q={quote(q[:80])}"
-
     # Sportsbooks — no deep links available, link to homepage
     sportsbooks = {
         "draftkings": "https://www.draftkings.com",
@@ -102,14 +80,6 @@ def _build_market_url(source: str, market_id: str, event_name: str,
     for name, url in sportsbooks.items():
         if name in src:
             return url
-
-    # Smarkets
-    if src == "smarkets":
-        if metadata_ and isinstance(metadata_, dict):
-            url = metadata_.get("url", "")
-            if url:
-                return url
-        return "https://smarkets.com"
 
     # SX Bet
     if src == "sxbet":
@@ -170,32 +140,8 @@ async def fetch_polymarket() -> None:
         logger.error(f"fetch_polymarket failed: {exc}", exc_info=True)
 
 
-async def fetch_predictit() -> None:
-    """Fetch latest PredictIt prediction-market data."""
-    try:
-        from ingestion.predictit import PredictItClient
-
-        client = PredictItClient()
-        results = await client.fetch()
-        logger.info(f"fetch_predictit: ingested {len(results)} price snapshots")
-    except ImportError:
-        logger.warning("fetch_predictit: ingestion.predictit not available — skipping")
-    except Exception as exc:
-        logger.error(f"fetch_predictit failed: {exc}", exc_info=True)
-
-
-async def fetch_manifold() -> None:
-    """Fetch latest Manifold Markets prediction-market data."""
-    try:
-        from ingestion.manifold import ManifoldClient
-
-        client = ManifoldClient()
-        results = await client.fetch()
-        logger.info(f"fetch_manifold: ingested {len(results)} price snapshots")
-    except ImportError:
-        logger.warning("fetch_manifold: ingestion.manifold not available — skipping")
-    except Exception as exc:
-        logger.error(f"fetch_manifold failed: {exc}", exc_info=True)
+    # PredictIt removed — low liquidity, $850 cap, 15% fees
+    # Manifold removed — play money only
 
 
 async def fetch_sxbet() -> None:
@@ -212,18 +158,7 @@ async def fetch_sxbet() -> None:
         logger.error(f"fetch_sxbet failed: {exc}", exc_info=True)
 
 
-async def fetch_smarkets() -> None:
-    """Fetch prediction market data from Smarkets exchange."""
-    try:
-        from ingestion.smarkets import SmarketsClient
-
-        client = SmarketsClient()
-        results = await client.fetch()
-        logger.info(f"fetch_smarkets: ingested {len(results)} prices")
-    except ImportError:
-        logger.warning("fetch_smarkets: not available — skipping")
-    except Exception as exc:
-        logger.error(f"fetch_smarkets failed: {exc}", exc_info=True)
+    # Smarkets removed — UK/EU only, not available in the US
 
 
 async def fetch_metaforecast() -> None:
@@ -282,32 +217,8 @@ async def fetch_polyrouter() -> None:
         logger.error(f"fetch_polyrouter failed: {exc}", exc_info=True)
 
 
-async def fetch_betfair() -> None:
-    """Fetch exchange odds from Betfair (world's largest exchange)."""
-    try:
-        from ingestion.betfair import BetfairClient
-
-        client = BetfairClient()
-        results = await client.fetch()
-        logger.info(f"fetch_betfair: ingested {len(results)} prices")
-    except ImportError:
-        logger.warning("fetch_betfair: not available — skipping")
-    except Exception as exc:
-        logger.error(f"fetch_betfair failed: {exc}", exc_info=True)
-
-
-async def fetch_matchbook() -> None:
-    """Fetch exchange odds from Matchbook."""
-    try:
-        from ingestion.matchbook import MatchbookClient
-
-        client = MatchbookClient()
-        results = await client.fetch()
-        logger.info(f"fetch_matchbook: ingested {len(results)} prices")
-    except ImportError:
-        logger.warning("fetch_matchbook: not available — skipping")
-    except Exception as exc:
-        logger.error(f"fetch_matchbook failed: {exc}", exc_info=True)
+    # Betfair removed — blocked in the US
+    # Matchbook removed — UK/EU only
 
 
 async def fetch_cloudbet() -> None:
@@ -707,7 +618,7 @@ async def run_discrepancy() -> None:
             public_data.extend(prices)
 
         # Load prediction market prices (Kalshi, Polymarket, PredictIt, Manifold)
-        prediction_sources = ["kalshi", "polymarket", "predictit", "manifold"]
+        prediction_sources = ["kalshi", "polymarket"]
         pred_prices = (
             db.query(MarketPrice)
             .filter(
@@ -1076,36 +987,6 @@ def start_scheduler() -> None:
         next_run_time=_now + timedelta(seconds=90),
     )
     _scheduler.add_job(
-        fetch_predictit,
-        "interval",
-        seconds=PREDICTIT_POLL_SECONDS,
-        id="fetch_predictit",
-        name="PredictIt ingestion",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=130),
-    )
-    _scheduler.add_job(
-        fetch_manifold,
-        "interval",
-        seconds=MANIFOLD_POLL_SECONDS,
-        id="fetch_manifold",
-        name="Manifold Markets ingestion",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=170),
-    )
-    _scheduler.add_job(
-        fetch_smarkets,
-        "interval",
-        seconds=300,
-        id="fetch_smarkets",
-        name="Smarkets exchange",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=45),
-    )
-    _scheduler.add_job(
         fetch_sxbet,
         "interval",
         seconds=300,
@@ -1155,26 +1036,6 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         next_run_time=_now + timedelta(seconds=155),
-    )
-    _scheduler.add_job(
-        fetch_betfair,
-        "interval",
-        seconds=300,
-        id="fetch_betfair",
-        name="Betfair Exchange",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=180),
-    )
-    _scheduler.add_job(
-        fetch_matchbook,
-        "interval",
-        seconds=300,
-        id="fetch_matchbook",
-        name="Matchbook Exchange",
-        replace_existing=True,
-        max_instances=1,
-        next_run_time=_now + timedelta(seconds=210),
     )
     _scheduler.add_job(
         fetch_cloudbet,

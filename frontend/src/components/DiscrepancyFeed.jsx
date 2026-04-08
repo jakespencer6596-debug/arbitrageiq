@@ -7,38 +7,35 @@ const CONFIDENCE_CONFIG = {
 }
 
 const PLATFORM_URLS = {
-  predictit:      (id) => id?.startsWith('http') ? id : `https://www.predictit.org/markets/detail/${id}`,
   polymarket:     (id) => id?.startsWith('http') ? id : `https://polymarket.com/markets?_q=${encodeURIComponent(id)}`,
   kalshi:         (id) => id?.startsWith('http') ? id : `https://kalshi.com/markets/${id}`,
-  smarkets:       (id) => id?.startsWith('http') ? id : `https://smarkets.com`,
-  manifold:       (id) => id?.startsWith('http') ? id : `https://manifold.markets`,
-  betfair:        ()   => 'https://www.betfair.com',
   sxbet:          ()   => 'https://sx.bet',
   opinion:        ()   => 'https://opinion.trade',
-  matchbook:      ()   => 'https://www.matchbook.com',
+  futuur:         ()   => 'https://futuur.com',
+  insight:        ()   => 'https://insightprediction.com',
+  azuro:          ()   => 'https://azuro.org',
+  limitless:      ()   => 'https://limitless.exchange',
+  drift:          ()   => 'https://drift.trade',
 }
 
 const CONSENSUS_SOURCE_URLS = {
-  predictit:      'https://www.predictit.org',
   polymarket:     'https://polymarket.com',
   kalshi:         'https://kalshi.com',
-  smarkets:       'https://smarkets.com',
-  manifold:       'https://manifold.markets',
-  betfair:        'https://www.betfair.com',
   metaculus:      'https://www.metaculus.com',
   gjopen:         'https://www.gjopen.com',
-  fantasyscotus:  'https://fantasyscotus.net',
-  foretold:       'https://www.foretold.io',
   infer:          'https://www.infer-pub.com',
   hypermind:      'https://www.hypermind.com',
   insight:        'https://insightprediction.com',
   sxbet:          'https://sx.bet',
   opinion:        'https://opinion.trade',
+  futuur:         'https://futuur.com',
+  limitless:      'https://limitless.exchange',
+  drift:          'https://drift.trade',
 }
 
 function parseNoteSources(notes) {
   if (!notes) return []
-  // Parse "6 sources | predictit: 4%, betfair: 15%, fantasyscotus: 13%"
+  // Parse "6 sources | kalshi: 4%, polymarket: 15%, metaculus: 13%"
   const pipeIdx = notes.indexOf('|')
   if (pipeIdx === -1) return []
   const sourceStr = notes.substring(pipeIdx + 1).trim()

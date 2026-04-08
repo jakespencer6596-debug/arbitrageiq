@@ -10,23 +10,18 @@ load_dotenv('/etc/secrets/.env')
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # API Keys
-ODDS_API_KEY = os.getenv("ODDS_API_KEY", "bdc9181d902b5410bd4cff7066945065")
+ODDS_API_KEY = os.getenv("ODDS_API_KEY", "21143bf79e458a64a2c2f246bb2133fa")
 
 # URLs
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 KALSHI_WS_BASE = "wss://api.elections.kalshi.com/trade-api/v2/ws/v2"
 POLYMARKET_API_URL = os.getenv("POLYMARKET_API_URL", "https://gamma-api.polymarket.com")
-PREDICTIT_API_URL = os.getenv("PREDICTIT_API_URL", "https://www.predictit.org/api/marketdata/all/")
-MANIFOLD_API_URL = os.getenv("MANIFOLD_API_URL", "https://api.manifold.markets/v0")
-
 # Rate limiting — tuned for 512 MB Render Starter plan
 BUDGET_MODE = os.getenv("BUDGET_MODE", "true").lower() == "true"
-ODDS_API_POLL_SECONDS = 600 if BUDGET_MODE else 30
+ODDS_API_POLL_SECONDS = 3600 if BUDGET_MODE else 30  # 1 hour — 5-day key rotation budget
 KALSHI_POLL_SECONDS = 120
 POLYMARKET_POLL_SECONDS = 120
-PREDICTIT_POLL_SECONDS = 180
-MANIFOLD_POLL_SECONDS = 300
 KEEPALIVE_SECONDS = 540
 
 # DB cleanup — keep only this many recent rows per source to cap memory
@@ -49,21 +44,11 @@ PLATFORM_FEES = {
         "withdrawal_fee": 0.00,
         "profit_fee": 0.00,
     },
-    "predictit": {
-        "trade_fee": 0.00,
-        "withdrawal_fee": 0.05,  # 5% withdrawal fee on all funds
-        "profit_fee": 0.10,      # 10% fee on profits
-    },
     "manifold": {
         "trade_fee": 0.00,
         "withdrawal_fee": 0.00,
         "profit_fee": 0.00,
         "is_play_money": True,   # Mana, not real USD
-    },
-    "smarkets": {
-        "trade_fee": 0.01,       # ~1% spread cost
-        "withdrawal_fee": 0.00,
-        "profit_fee": 0.02,      # 2% commission on net winnings
     },
     "sxbet": {
         "trade_fee": 0.00,
@@ -74,16 +59,6 @@ PLATFORM_FEES = {
         "trade_fee": 0.00,       # 0% maker fee
         "withdrawal_fee": 0.00,
         "profit_fee": 0.00,
-    },
-    "betfair": {
-        "trade_fee": 0.00,
-        "withdrawal_fee": 0.00,
-        "profit_fee": 0.05,      # ~5% commission on net winnings (varies by market)
-    },
-    "matchbook": {
-        "trade_fee": 0.00,
-        "withdrawal_fee": 0.00,
-        "profit_fee": 0.02,      # ~2% commission
     },
     "cloudbet": {
         "trade_fee": 0.01,       # ~1% spread
@@ -116,6 +91,39 @@ PLATFORM_FEES = {
         "profit_fee": 0.00,
     },
 }
+
+# ---------------------------------------------------------------------------
+# Source classification — determines what counts as a real betting platform
+# vs. reference-only forecasting sources (no real money trading)
+# ---------------------------------------------------------------------------
+TRADEABLE_SOURCES = frozenset({
+    "polymarket", "kalshi", "sxbet", "cloudbet", "opinion",
+    "futuur", "insight", "azuro", "limitless", "drift",
+    # Odds API sportsbooks
+    "draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
+    "betrivers", "bovada", "bet365", "pinnacle",
+    # Odds API aggregators
+    "odds_api", "odds_api_io",
+})
+
+# Reference-only: useful for consensus/value signals, NOT for placing bets
+REFERENCE_SOURCES = frozenset({
+    "manifold",  # play money (Mana tokens, not real USD)
+    "metaculus", "gjopen", "infer", "foretold", "hypermind",
+    "fantasyscotus", "givewellopenphil", "rootclaim",
+    "metaculus_mf", "gjopen_mf", "infer_mf", "fantasyscotus_mf",
+    "givewellopenphil_mf", "foretold_mf", "hypermind_mf",
+})
+
+def is_tradeable_source(source: str) -> bool:
+    """Check if a source is a real-money tradeable platform."""
+    src = source.lower().strip()
+    if src in TRADEABLE_SOURCES:
+        return True
+    for t in TRADEABLE_SOURCES:
+        if t in src:
+            return True
+    return False
 
 # ---------------------------------------------------------------------------
 # Category system — user selects one category at a time to save memory

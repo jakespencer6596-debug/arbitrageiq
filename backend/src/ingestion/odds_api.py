@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Track which sport batch we're on for rotation
 _current_batch_index = 0
-_BATCH_SIZE = 5  # Increased for broader coverage
+_BATCH_SIZE = 4  # 4 sports × 24 polls/day = 96 calls/day, fits 5-day key rotation
 
 
 def _classify_sport(sport_key: str) -> str:

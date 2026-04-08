@@ -15,13 +15,13 @@ const TABS = [
 const PLATFORM_COLORS = {
   polymarket: '#8B5CF6',
   kalshi: '#3B82F6',
-  predictit: '#EF4444',
-  smarkets: '#F59E0B',
-  manifold: '#10B981',
   sxbet: '#EC4899',
-  betfair: '#F97316',
-  matchbook: '#06B6D4',
   opinion: '#8B5CF6',
+  futuur: '#06B6D4',
+  insight: '#EC4899',
+  azuro: '#F97316',
+  limitless: '#10B981',
+  drift: '#6366F1',
   metaforecast: '#6366F1',
 }
 

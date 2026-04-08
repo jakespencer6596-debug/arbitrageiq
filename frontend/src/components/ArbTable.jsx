@@ -6,10 +6,10 @@ function bookUrl(book, eventName) {
   const q = encodeURIComponent(eventName || '')
   if (key === 'polymarket') return `https://polymarket.com/markets?_q=${q}`
   if (key === 'kalshi') return `https://kalshi.com/markets`
-  if (key === 'predictit') return 'https://www.predictit.org/markets'
-  if (key === 'manifold') return `https://manifold.markets/search?q=${q}`
-  if (key === 'smarkets') return 'https://smarkets.com'
-  if (key === 'betfair') return 'https://www.betfair.com'
+  if (key === 'sxbet') return 'https://sx.bet'
+  if (key === 'opinion') return 'https://opinion.trade'
+  if (key === 'futuur') return 'https://futuur.com'
+  if (key === 'insight') return 'https://insightprediction.com'
   const books = { draftkings:'https://www.draftkings.com', fanduel:'https://www.fanduel.com', betmgm:'https://www.betmgm.com', bovada:'https://www.bovada.lv', bet365:'https://www.bet365.com', pinnacle:'https://www.pinnacle.com' }
   if (books[key]) return books[key]
   for (const [n, u] of Object.entries(books)) { if (key.includes(n)) return u }

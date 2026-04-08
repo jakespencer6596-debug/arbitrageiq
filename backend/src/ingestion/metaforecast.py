@@ -58,12 +58,10 @@ PLATFORM_MAP = {
     "metaculus": "metaculus",
     "polymarket": None,  # Skip — we ingest directly
     "kalshi": None,       # Skip — we ingest directly
-    "manifold": None,     # Skip — we ingest directly
     "goodjudgmentopen": "gjopen",
     "infer": "infer",
     "hypermind": "hypermind",
     "rootclaim": "rootclaim",
-    "predictit": None,    # Dropped
 }
 
 
@@ -129,8 +127,11 @@ class MetaforecastClient:
                 num_forecasts = quality.get("numForecasts", 0) or 0
                 volume = quality.get("volume", 0) or 0
 
-                # Map to our source name — pass through unknown platforms
-                source = PLATFORM_MAP.get(platform_id, platform_id)
+                # Map to our source name — ONLY allow explicitly mapped platforms
+                # Unknown platforms (foretold, fantasyscotus, etc.) are blocked
+                if platform_id not in PLATFORM_MAP:
+                    continue  # Unknown platform — skip entirely
+                source = PLATFORM_MAP[platform_id]
                 if source is None:
                     continue  # Skip platforms we already ingest directly
 

@@ -68,7 +68,7 @@ def map_market(market: dict) -> dict:
             data_sources.append("fred_SP500")
 
     elif category == "political":
-        data_sources.append("predictit_cross")
+        data_sources.append("kalshi_cross")
 
     elif category == "sports":
         data_sources.append("odds_api_cross")

@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func
 
 import constants
+from constants import is_tradeable_source, TRADEABLE_SOURCES
 from db.models import (
     ArbOpportunity,
     ArbHistory,
@@ -720,9 +721,9 @@ def _row_to_dict(obj: Any) -> dict[str, Any]:
 async def _trigger_fetch_cycle():
     """Fire all ingestion jobs for the active category, then run arb detection."""
     import asyncio
-    from scheduler import fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_odds, fetch_metaforecast, fetch_smarkets, fetch_sxbet, run_arb  # noqa: E501
+    from scheduler import fetch_polymarket, fetch_kalshi, fetch_odds, fetch_metaforecast, fetch_sxbet, run_arb  # noqa: E501
 
-    jobs = [fetch_polymarket, fetch_kalshi, fetch_predictit, fetch_manifold, fetch_smarkets, fetch_sxbet, fetch_metaforecast, fetch_odds]
+    jobs = [fetch_polymarket, fetch_kalshi, fetch_sxbet, fetch_metaforecast, fetch_odds]
     for job in jobs:
         try:
             await job()
@@ -808,7 +809,11 @@ async def get_snapshot():
             .limit(10)
             .all()
         )
-        total_markets = db.query(func.count(TrackedMarket.id)).scalar() or 0
+        total_markets = (
+            db.query(func.count(TrackedMarket.id))
+            .filter(TrackedMarket.source.in_(list(TRADEABLE_SOURCES)))
+            .scalar() or 0
+        )
         active_arbs = (
             db.query(func.count(ArbOpportunity.id))
             .filter(ArbOpportunity.is_active == True)  # noqa: E712
@@ -884,7 +889,7 @@ async def debug_prices():
         # Sample some odds_api-adjacent sources
         bookmaker_sample = (
             db.query(MarketPrice.source, MarketPrice.event_name, MarketPrice.outcome, MarketPrice.raw_odds)
-            .filter(MarketPrice.source.notin_(["fred", "kalshi", "polymarket", "predictit", "coingecko"]))
+            .filter(MarketPrice.source.notin_(["fred", "kalshi", "polymarket", "coingecko"]))
             .limit(10)
             .all()
         )
@@ -1035,7 +1040,15 @@ async def get_stats():
     """
     db = SessionLocal()
     try:
-        total_markets = db.query(func.count(TrackedMarket.id)).scalar() or 0
+        # Only count tradeable (real-money) sources in stats — not reference
+        # sources like manifold (play money), metaculus, gjopen, foretold, etc.
+        all_tradeable = list(TRADEABLE_SOURCES)
+
+        total_markets = (
+            db.query(func.count(TrackedMarket.id))
+            .filter(TrackedMarket.source.in_(all_tradeable))
+            .scalar() or 0
+        )
 
         active_arbs = (
             db.query(func.count(ArbOpportunity.id))
@@ -1061,10 +1074,13 @@ async def get_stats():
             or 0
         )
 
-        # Category breakdown
+        # Category breakdown — only tradeable sources
         category_rows = (
             db.query(TrackedMarket.category, func.count(TrackedMarket.id))
-            .filter(TrackedMarket.is_active == True)  # noqa: E712
+            .filter(
+                TrackedMarket.is_active == True,  # noqa: E712
+                TrackedMarket.source.in_(all_tradeable),
+            )
             .group_by(TrackedMarket.category)
             .all()
         )
@@ -1076,12 +1092,13 @@ async def get_stats():
             .filter(
                 TrackedMarket.is_mapped == False,  # noqa: E712
                 TrackedMarket.is_active == True,  # noqa: E712
+                TrackedMarket.source.in_(all_tradeable),
             )
             .scalar()
             or 0
         )
 
-        # Platform status from SystemStatus
+        # Platform status — only show tradeable platforms
         status_rows = db.query(SystemStatus).all()
         platforms = [
             {
@@ -1091,6 +1108,7 @@ async def get_stats():
                 "last_error": s.last_error,
             }
             for s in status_rows
+            if is_tradeable_source(s.source)
         ]
 
         # Active discrepancy details for the feed
@@ -1103,18 +1121,24 @@ async def get_stats():
         )
         discrepancy_details = [_row_to_dict(d) for d in disc_rows]
 
-        # Count active price feeds (total active MarketPrice rows)
+        # Count active price feeds — only tradeable sources
         active_prices = (
             db.query(func.count(MarketPrice.id))
-            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .filter(
+                MarketPrice.is_active == True,  # noqa: E712
+                MarketPrice.source.in_(all_tradeable),
+            )
             .scalar()
             or 0
         )
 
-        # Count unique sources from active prices (bookmakers + platforms)
+        # Count unique tradeable sources from active prices
         source_count = (
             db.query(func.count(func.distinct(MarketPrice.source)))
-            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .filter(
+                MarketPrice.is_active == True,  # noqa: E712
+                MarketPrice.source.in_(all_tradeable),
+            )
             .scalar()
             or 0
         )

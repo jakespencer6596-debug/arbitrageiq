@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react'
 
 const PLATFORM_NOTES = {
-  predictit: 'PredictIt: 10% profit fee + 5% withdrawal fee. $850 max per contract.',
   polymarket: 'Polymarket: No fees. USDC on Polygon network.',
   kalshi: 'Kalshi: ~2% spread cost. US-regulated exchange.',
-  manifold: 'Manifold: Play money (Mana). Not real USD.',
+  sxbet: 'SX Bet: 2% commission. Decentralized exchange.',
+  opinion: 'Opinion: No fees. 3rd largest prediction market.',
 }
 
 export default function StakeCalculator({ opportunity, onClose }) {
