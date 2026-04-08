@@ -8,6 +8,8 @@ import CategoryFilter from './CategoryFilter'
 import AnimatedCounter from './AnimatedCounter'
 import AnalyticsPanel from './AnalyticsPanel'
 import ArbAlert from './ArbAlert'
+import BetTracker from './BetTracker'
+import AlertSettings from './AlertSettings'
 
 const CATEGORY_LABELS = {
   politics: { name: 'Politics', color: 'purple' },
@@ -22,6 +24,7 @@ const CATEGORY_LABELS = {
 const VIEW_TABS = [
   { key: 'scanner', label: 'Scanner', icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
   { key: 'analytics', label: 'Analytics', icon: 'M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
+  { key: 'bets', label: 'Bets', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' },
   { key: 'platforms', label: 'Platforms', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2' },
 ]
 
@@ -33,6 +36,7 @@ export default function Dashboard({
   isAdmin, onOpenAdmin, toasts, onDismissToast, soundEnabled, onToggleSound,
 }) {
   const [view, setView] = useState('scanner')
+  const [showAlertSettings, setShowAlertSettings] = useState(false)
 
   const activeArbs = stats?.active_arbs ?? opportunities?.length ?? 0
   const activeDiscs = stats?.active_discrepancies ?? discrepancies?.length ?? 0
@@ -83,6 +87,12 @@ export default function Dashboard({
 
           {/* Right */}
           <div className="flex items-center gap-2">
+            {/* Alert settings */}
+            <button onClick={() => setShowAlertSettings(true)} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/[0.04] transition-colors" title="Alert settings">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+            </button>
             <button onClick={onToggleSound} className={`p-1.5 rounded-lg transition-colors ${soundEnabled ? 'text-mint-400' : 'text-gray-600'}`} title={soundEnabled ? 'Sound on' : 'Sound off'}>
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {soundEnabled
@@ -196,6 +206,7 @@ export default function Dashboard({
             </div>
           )}
           {view === 'analytics' && <AnalyticsPanel />}
+          {view === 'bets' && <BetTracker />}
           {view === 'platforms' && <MarketMap markets={markets} health={health} stats={stats} />}
         </main>
       )}
@@ -221,6 +232,29 @@ export default function Dashboard({
       </button>
 
       {showLiveFeed && <LiveFeed events={liveFeed} onClose={() => onToggleLiveFeed()} />}
+
+      {/* Alert settings modal */}
+      {showAlertSettings && <AlertSettings onClose={() => setShowAlertSettings(false)} />}
+
+      {/* Mobile bottom nav */}
+      <div className="fixed bottom-0 inset-x-0 z-30 md:hidden glass border-t border-white/[0.04] safe-bottom">
+        <div className="flex items-center justify-around py-2 px-2">
+          {VIEW_TABS.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setView(t.key)}
+              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg transition-colors ${
+                view === t.key ? 'text-mint-400' : 'text-gray-600'
+              }`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={t.icon} />
+              </svg>
+              <span className="text-[9px] font-medium">{t.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

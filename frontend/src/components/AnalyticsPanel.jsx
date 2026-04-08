@@ -241,6 +241,21 @@ function HistoryTab({ history }) {
     return da - db
   })
 
+  const exportCSV = () => {
+    const headers = ['Event', 'Category', 'Type', 'Source A', 'Source B', 'Peak Profit %', 'Times Detected', 'Duration (s)', 'First Detected', 'Last Seen', 'Status']
+    const rows = sorted.map(h => [
+      h.event_name || '', h.category || '', h.arb_type || '', h.source_a || '', h.source_b || '',
+      ((h.peak_profit_pct || 0) * 100).toFixed(2), h.times_detected || 1, h.duration_seconds || 0,
+      h.first_detected || '', h.last_seen || '', h.status || ''
+    ])
+    const csv = [headers, ...rows].map(r => r.map(c => `"${c}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `arbitrageiq-arb-history-${new Date().toISOString().slice(0,10)}.csv`; a.click()
+    URL.revokeObjectURL(url)
+  }
+
   if (sorted.length === 0) {
     return (
       <div className="text-center py-12 text-gray-600">
@@ -255,6 +270,16 @@ function HistoryTab({ history }) {
 
   return (
     <div className="overflow-x-auto">
+      {sorted.length > 0 && (
+        <div className="flex justify-end mb-3">
+          <button onClick={exportCSV} className="text-[10px] text-gray-500 hover:text-gray-300 font-medium px-2.5 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors flex items-center gap-1">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export CSV
+          </button>
+        </div>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800">
