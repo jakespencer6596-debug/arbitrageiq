@@ -605,7 +605,8 @@ async def get_analytics(request: Request):
     db = SessionLocal()
     try:
         total_ever = db.query(func.count(ArbHistory.id)).scalar() or 0
-        active_now = db.query(func.count(ArbHistory.id)).filter(ArbHistory.status == "active").scalar() or 0
+        # Use ArbOpportunity (same as hero stats) for consistent "active now" count
+        active_now = db.query(func.count(ArbOpportunity.id)).filter(ArbOpportunity.is_active == True).scalar() or 0  # noqa: E712
         avg_profit = db.query(func.avg(ArbHistory.peak_profit_pct)).scalar() or 0
         avg_duration = db.query(func.avg(ArbHistory.duration_seconds)).filter(ArbHistory.duration_seconds > 0).scalar() or 0
 
@@ -617,7 +618,7 @@ async def get_analytics(request: Request):
             .limit(10)
             .all()
         )
-        pairs = [{"a": a, "b": b, "count": c} for a, b, c in pair_rows]
+        pairs = [{"source_a": a, "source_b": b, "count": c} for a, b, c in pair_rows]
 
         return {
             "total_arbs_ever": total_ever,

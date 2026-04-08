@@ -372,7 +372,7 @@ function PlatformPairsTab({ pairs }) {
 function KpiCard({ label, value, icon, iconColor, format }) {
   let displayValue
   if (format === 'percent') {
-    displayValue = <AnimatedCounter value={(value || 0) * 100} decimals={2} suffix="%" className="text-2xl font-bold text-gray-100" />
+    displayValue = <AnimatedCounter value={value || 0} decimals={2} suffix="%" className="text-2xl font-bold text-gray-100" />
   } else if (format === 'minutes') {
     displayValue = <AnimatedCounter value={value || 0} decimals={1} suffix="m" className="text-2xl font-bold text-gray-100" />
   } else {
