@@ -1,71 +1,19 @@
 import React, { useState, useMemo } from 'react'
 import ArbCard from './ArbCard'
 
-/**
- * Generate a URL for a given betting platform / bookmaker.
- * Prediction markets get a search-query link; sportsbooks get their homepage.
- */
 function bookUrl(book, eventName) {
   const key = (book || '').toLowerCase().trim()
   const q = encodeURIComponent(eventName || '')
-
-  // Prediction markets – deep-link to a search for the event
   if (key === 'polymarket') return `https://polymarket.com/markets?_q=${q}`
   if (key === 'kalshi') return `https://kalshi.com/markets`
   if (key === 'predictit') return 'https://www.predictit.org/markets'
   if (key === 'manifold') return `https://manifold.markets/search?q=${q}`
-
-  // Common odds-API sportsbooks
-  const sportsbooks = {
-    draftkings: 'https://www.draftkings.com',
-    fanduel: 'https://www.fanduel.com',
-    betmgm: 'https://www.betmgm.com',
-    caesars: 'https://www.caesars.com/sportsbook-and-casino',
-    pointsbet: 'https://www.pointsbet.com',
-    betrivers: 'https://www.betrivers.com',
-    unibet: 'https://www.unibet.com',
-    bovada: 'https://www.bovada.lv',
-    betonline: 'https://www.betonline.ag',
-    bet365: 'https://www.bet365.com',
-    williamhill: 'https://www.williamhill.com',
-    pinnacle: 'https://www.pinnacle.com',
-    betfair: 'https://www.betfair.com',
-    foxbet: 'https://www.foxbet.com',
-    barstool: 'https://www.barstoolsportsbook.com',
-    wynnbet: 'https://www.wynnbet.com',
-    superbook: 'https://www.superbook.com',
-    betus: 'https://www.betus.com.pa',
-    mybookie: 'https://www.mybookie.ag',
-  }
-
-  // Try exact match first, then substring match (e.g. "draftkings_h2h" -> draftkings)
-  if (sportsbooks[key]) return sportsbooks[key]
-  for (const [name, url] of Object.entries(sportsbooks)) {
-    if (key.includes(name)) return url
-  }
-
-  return null // unknown source – won't be wrapped in a link
-}
-
-function relativeTime(dateStr) {
-  if (!dateStr) return 'just now'
-  const then = new Date(dateStr).getTime()
-  if (isNaN(then)) return 'just now'
-  const now = Date.now()
-  const diff = Math.max(0, now - then)
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 5) return 'just now'
-  if (seconds < 60) return `${seconds}s ago`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
-
-function isNew(dateStr) {
-  if (!dateStr) return false
-  return Date.now() - new Date(dateStr).getTime() < 60000
+  if (key === 'smarkets') return 'https://smarkets.com'
+  if (key === 'betfair') return 'https://www.betfair.com'
+  const books = { draftkings:'https://www.draftkings.com', fanduel:'https://www.fanduel.com', betmgm:'https://www.betmgm.com', bovada:'https://www.bovada.lv', bet365:'https://www.bet365.com', pinnacle:'https://www.pinnacle.com' }
+  if (books[key]) return books[key]
+  for (const [n, u] of Object.entries(books)) { if (key.includes(n)) return u }
+  return null
 }
 
 const SORT_KEYS = {
@@ -74,13 +22,6 @@ const SORT_KEYS = {
   category: (a, b) => (a.category || '').localeCompare(b.category || ''),
   profit_1k: (a, b) => (b.net_profit_on_1000 ?? 0) - (a.net_profit_on_1000 ?? 0),
   annualized: (a, b) => (b.annualized_roi ?? -1) - (a.annualized_roi ?? -1),
-  detected_at: (a, b) => new Date(b.detected_at || 0) - new Date(a.detected_at || 0),
-}
-
-const CONFIDENCE_COLORS = {
-  high: 'bg-green-500',
-  medium: 'bg-yellow-500',
-  low: 'bg-gray-500',
 }
 
 const ROWS_PER_PAGE = 25
@@ -91,312 +32,191 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
   const [page, setPage] = useState(0)
 
   const handleSort = (key) => {
-    if (sortKey === key) {
-      setSortAsc((v) => !v)
-    } else {
-      setSortKey(key)
-      setSortAsc(false)
-    }
+    if (sortKey === key) setSortAsc(v => !v)
+    else { setSortKey(key); setSortAsc(false) }
   }
 
   const sorted = useMemo(() => {
     const list = [...(opportunities || [])]
     const fn = SORT_KEYS[sortKey] || SORT_KEYS.profit_pct
-    list.sort((a, b) => {
-      const result = fn(a, b)
-      return sortAsc ? -result : result
-    })
+    list.sort((a, b) => sortAsc ? -fn(a, b) : fn(a, b))
     return list
   }, [opportunities, sortKey, sortAsc])
 
-  // Reset to first page when data or sort changes
-  React.useEffect(() => {
-    setPage(0)
-  }, [opportunities, sortKey, sortAsc])
+  React.useEffect(() => { setPage(0) }, [opportunities, sortKey, sortAsc])
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / ROWS_PER_PAGE))
   const currentPage = Math.min(page, totalPages - 1)
-  const paginatedRows = sorted.slice(currentPage * ROWS_PER_PAGE, (currentPage + 1) * ROWS_PER_PAGE)
+  const rows = sorted.slice(currentPage * ROWS_PER_PAGE, (currentPage + 1) * ROWS_PER_PAGE)
 
   const SortIcon = ({ column }) => {
-    if (sortKey !== column) {
-      return (
-        <svg className="w-3.5 h-3.5 text-gray-600 ml-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-        </svg>
-      )
-    }
-    return (
-      <svg className="w-3.5 h-3.5 text-green-400 ml-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d={sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'}
-        />
-      </svg>
-    )
+    if (sortKey !== column) return <svg className="w-3 h-3 text-gray-700 ml-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+    return <svg className="w-3 h-3 text-mint-400 ml-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7'} /></svg>
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg shadow-black/20 overflow-hidden">
+    <div className="bg-surface-1 rounded-2xl border border-white/[0.04] card-glow overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+      <div className="px-5 py-4 border-b border-white/[0.04] flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-100">Arbitrage Opportunities</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {sorted.length} active {sorted.length === 1 ? 'opportunity' : 'opportunities'}
-          </p>
+          <h2 className="text-sm font-semibold text-gray-100">Arbitrage Opportunities</h2>
+          <p className="text-[11px] text-gray-500 mt-0.5 font-mono">{sorted.length} active</p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-xs text-gray-500">Auto-updating</span>
+        <div className="flex items-center gap-1.5">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-mint-400 opacity-40" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-mint-500" />
+          </span>
+          <span className="text-[10px] text-gray-500 font-mono">SCANNING</span>
         </div>
       </div>
 
       {sorted.length === 0 ? (
-        /* Empty state */
         <div className="py-20 flex flex-col items-center justify-center text-center px-6">
-          <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mb-4 shimmer">
-            <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
+          <div className="w-14 h-14 rounded-2xl bg-surface-2 border border-white/[0.04] flex items-center justify-center mb-4 shimmer">
+            <svg className="w-7 h-7 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
-          <h3 className="text-gray-400 font-medium mb-1">No arbitrage opportunities detected yet</h3>
-          <p className="text-gray-600 text-sm max-w-sm">
-            The scanner is running. Opportunities will appear here automatically when cross-market price discrepancies are found.
+          <h3 className="text-sm text-gray-400 font-medium mb-1">Scanning for opportunities</h3>
+          <p className="text-xs text-gray-600 max-w-xs">
+            Cross-platform price discrepancies will appear here automatically when detected.
           </p>
         </div>
       ) : (
         <>
-        {/* Mobile: card layout */}
-        <div className="md:hidden p-4 space-y-3">
-          {paginatedRows.map((opp) => (
-            <ArbCard
-              key={opp.id || `${opp.event_name}-${opp.profit_pct}`}
-              opp={opp}
-              onClick={() => onSelectOpportunity(opp)}
-            />
-          ))}
-        </div>
-        {/* Desktop: table layout */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800">
-                <th
-                  className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
-                  onClick={() => handleSort('profit_pct')}
-                >
-                  Edge <SortIcon column="profit_pct" />
-                </th>
-                <th
-                  className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
-                  onClick={() => handleSort('event_name')}
-                >
-                  Event <SortIcon column="event_name" />
-                </th>
-                <th
-                  className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
-                  onClick={() => handleSort('category')}
-                >
-                  Category <SortIcon column="category" />
-                </th>
-                <th className="px-6 py-3">Books</th>
-                <th
-                  className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
-                  onClick={() => handleSort('profit_1k')}
-                >
-                  Net on $1K <SortIcon column="profit_1k" />
-                </th>
-                <th
-                  className="px-6 py-3 cursor-pointer hover:text-gray-300 transition-colors select-none"
-                  onClick={() => handleSort('annualized')}
-                >
-                  Ann. ROI <SortIcon column="annualized" />
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {paginatedRows.map((opp) => {
-                const grossPctRaw = opp.profit_pct ?? 0
-                const netPctRaw = opp.net_profit_pct ?? grossPctRaw
-                // For value bets, use edge as the primary metric
-                const isVB = opp.arb_type === 'value_bet'
-                const displayPctRaw = isVB ? Math.abs(opp.edge ?? grossPctRaw) : netPctRaw
-                const netPct = displayPctRaw < 1 ? displayPctRaw * 100 : displayPctRaw
-                const grossPct = grossPctRaw < 1 ? grossPctRaw * 100 : grossPctRaw
-                const netOn1K = isVB
-                  ? (displayPctRaw < 1 ? displayPctRaw * 1000 : (displayPctRaw / 100) * 1000)
-                  : (opp.net_profit_on_1000 ?? (netPctRaw < 1 ? netPctRaw * 1000 : (netPctRaw / 100) * 1000))
-                const freshRow = isNew(opp.detected_at)
-                const isPlayMoney = opp.arb_type === 'play_money'
-                const isOverround = opp.arb_type === 'overround'
-                const isValueBet = opp.arb_type === 'value_bet'
-                const feeDiff = grossPct - netPct
-                const edge = opp.edge ? Math.abs(opp.edge * 100) : null
-                const confidence = opp.confidence || 'low'
-                const freshness = opp.freshness_seconds ?? 0
-                const isStale = freshness > 120
-                const isVeryStale = freshness > 300
-                const annRoi = opp.annualized_roi != null ? (opp.annualized_roi < 1 ? opp.annualized_roi * 100 : opp.annualized_roi) : null
+          {/* Mobile cards */}
+          <div className="md:hidden p-3 space-y-2.5">
+            {rows.map((opp) => (
+              <ArbCard key={opp.id || `${opp.event_name}-${opp.profit_pct}`} opp={opp} onClick={() => onSelectOpportunity(opp)} />
+            ))}
+          </div>
 
-                return (
-                  <tr
-                    key={opp.id || `${opp.event_name}-${opp.profit_pct}-${opp.detected_at}`}
-                    onClick={() => onSelectOpportunity(opp)}
-                    className={`cursor-pointer transition-colors hover:bg-gray-800/60 group ${
-                      freshRow ? 'animate-row-highlight' : ''
-                    } ${isPlayMoney ? 'opacity-60' : ''}`}
-                  >
-                    {/* Net Profit % + Confidence */}
-                    <td className="px-6 py-3.5">
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${CONFIDENCE_COLORS[confidence]}`} title={`${confidence} confidence`} />
-                          <span
-                            className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold tabular-nums ${
-                              netPct >= 5
-                                ? 'bg-green-500/20 text-green-300'
-                                : netPct >= 2
-                                ? 'bg-green-500/10 text-green-400'
-                                : 'bg-green-500/5 text-green-500'
-                            }`}
-                          >
-                            +{netPct.toFixed(2)}%
-                          </span>
-                          {isStale && (
-                            <span className={`text-[10px] px-1 py-0.5 rounded font-medium ${isVeryStale ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
-                              {isVeryStale ? 'STALE' : 'OLD'}
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[10px] text-gray-600 uppercase tracking-[0.1em] border-b border-white/[0.04]">
+                  <th className="px-5 py-3 cursor-pointer hover:text-gray-400 transition-colors select-none" onClick={() => handleSort('profit_pct')}>
+                    Edge <SortIcon column="profit_pct" />
+                  </th>
+                  <th className="px-5 py-3 cursor-pointer hover:text-gray-400 transition-colors select-none" onClick={() => handleSort('event_name')}>
+                    Event <SortIcon column="event_name" />
+                  </th>
+                  <th className="px-5 py-3 cursor-pointer hover:text-gray-400 transition-colors select-none" onClick={() => handleSort('category')}>
+                    Category <SortIcon column="category" />
+                  </th>
+                  <th className="px-5 py-3">Platforms</th>
+                  <th className="px-5 py-3 cursor-pointer hover:text-gray-400 transition-colors select-none" onClick={() => handleSort('profit_1k')}>
+                    Net/$1K <SortIcon column="profit_1k" />
+                  </th>
+                  <th className="px-5 py-3 cursor-pointer hover:text-gray-400 transition-colors select-none" onClick={() => handleSort('annualized')}>
+                    Ann. ROI <SortIcon column="annualized" />
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.02]">
+                {rows.map((opp) => {
+                  const grossRaw = opp.profit_pct ?? 0
+                  const netRaw = opp.net_profit_pct ?? grossRaw
+                  const isVB = opp.arb_type === 'value_bet'
+                  const displayRaw = isVB ? Math.abs(opp.edge ?? grossRaw) : netRaw
+                  const netPct = displayRaw < 1 ? displayRaw * 100 : displayRaw
+                  const grossPct = grossRaw < 1 ? grossRaw * 100 : grossRaw
+                  const netOn1K = isVB
+                    ? (displayRaw < 1 ? displayRaw * 1000 : (displayRaw / 100) * 1000)
+                    : (opp.net_profit_on_1000 ?? (netRaw < 1 ? netRaw * 1000 : (netRaw / 100) * 1000))
+                  const isPlayMoney = opp.arb_type === 'play_money'
+                  const isOverround = opp.arb_type === 'overround'
+                  const isValueBet = opp.arb_type === 'value_bet'
+                  const feeDiff = grossPct - netPct
+                  const confidence = opp.confidence || 'low'
+                  const confCfg = { high: 'bg-mint-500', medium: 'bg-amber-500', low: 'bg-gray-600' }
+                  const freshness = opp.freshness_seconds ?? 0
+                  const isStale = freshness > 120
+                  const annRoi = opp.annualized_roi != null ? (opp.annualized_roi < 1 ? opp.annualized_roi * 100 : opp.annualized_roi) : null
+
+                  return (
+                    <tr
+                      key={opp.id || `${opp.event_name}-${opp.profit_pct}-${opp.detected_at}`}
+                      onClick={() => onSelectOpportunity(opp)}
+                      className={`cursor-pointer transition-colors hover:bg-white/[0.02] ${isPlayMoney ? 'opacity-50' : ''}`}
+                    >
+                      <td className="px-5 py-3.5">
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${confCfg[confidence]}`} />
+                            <span className={`font-bold font-mono text-xs tabular-nums ${
+                              netPct >= 5 ? 'text-mint-300' : netPct >= 2 ? 'text-mint-400' : 'text-mint-500'
+                            }`}>
+                              +{netPct.toFixed(2)}%
                             </span>
+                            {isStale && <span className="text-[8px] text-amber-500/60 font-mono">STALE</span>}
+                          </div>
+                          {feeDiff > 0.01 && (
+                            <span className="text-[9px] text-gray-700 mt-0.5 pl-3 font-mono">{grossPct.toFixed(1)}% - {feeDiff.toFixed(1)}% fees</span>
                           )}
                         </div>
-                        {feeDiff > 0.01 && (
-                          <span className="text-[10px] text-gray-600 mt-0.5 pl-3.5">
-                            gross {grossPct.toFixed(1)}% - {feeDiff.toFixed(1)}% fees
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-start gap-1.5">
+                          {(isOverround || isValueBet) && (
+                            <span className={`shrink-0 text-[8px] border px-1 py-0.5 rounded font-bold mt-0.5 ${
+                              isValueBet ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            }`}>
+                              {isValueBet ? 'VALUE' : 'OVRND'}
+                            </span>
+                          )}
+                          <span className="text-[12px] text-gray-300 font-medium leading-snug">{opp.event_name || 'Unknown'}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <CatBadge category={opp.category} />
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {opp.legs?.slice(0, 3).map((leg, i) => {
+                            const b = leg.source || ''
+                            const url = leg.market_url || bookUrl(b, opp.event_name)
+                            return url ? (
+                              <a key={i} href={url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                                className="text-[10px] bg-surface-2 text-gray-400 px-1.5 py-0.5 rounded border border-white/[0.04] hover:text-mint-400 hover:border-mint-500/20 transition-colors font-medium">
+                                {b}
+                              </a>
+                            ) : (
+                              <span key={i} className="text-[10px] bg-surface-2 text-gray-500 px-1.5 py-0.5 rounded border border-white/[0.04]">{b}</span>
+                            )
+                          })}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <span className="text-mint-400 font-bold font-mono text-xs">${netOn1K.toFixed(2)}</span>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        {annRoi != null ? (
+                          <span className={`text-xs font-bold font-mono ${annRoi >= 100 ? 'text-mint-300' : annRoi >= 20 ? 'text-mint-400' : 'text-gray-500'}`}>
+                            {annRoi >= 1000 ? `${(annRoi/1000).toFixed(0)}K%` : `${annRoi.toFixed(0)}%`}
                           </span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Event */}
-                    <td className="px-6 py-3.5">
-                      <div className="flex items-start gap-1.5">
-                        {isValueBet && (
-                          <span className="shrink-0 text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded font-medium mt-0.5">
-                            {opp.direction || 'VALUE'} {edge ? `${edge.toFixed(0)}% edge` : ''}
-                          </span>
-                        )}
-                        {isOverround && (
-                          <span className="shrink-0 text-[10px] bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-1.5 py-0.5 rounded font-medium mt-0.5">
-                            OVERROUND
-                          </span>
-                        )}
-                        {isPlayMoney && (
-                          <span className="shrink-0 text-[10px] bg-gray-500/10 text-gray-400 border border-gray-500/20 px-1.5 py-0.5 rounded font-medium mt-0.5">
-                            PLAY $
-                          </span>
-                        )}
-                        <span className="text-gray-200 font-medium">
-                          {opp.event_name || 'Unknown Event'}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Category */}
-                    <td className="px-6 py-3.5">
-                      <CategoryBadge category={opp.category} />
-                    </td>
-
-                    {/* Books */}
-                    <td className="px-6 py-3.5">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {opp.legs && opp.legs.length > 0
-                          ? opp.legs.map((leg, i) => {
-                              const b = leg.source || leg.book || leg.platform || ''
-                              const url = leg.market_url || bookUrl(b, opp.event_name)
-                              return url ? (
-                                <a
-                                  key={i}
-                                  href={url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="inline-flex items-center gap-0.5 text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-md border border-gray-700 transition-colors hover:text-blue-400 hover:border-blue-500/40 hover:underline"
-                                >
-                                  {b}<span className="text-[10px] leading-none">&#8599;</span>
-                                </a>
-                              ) : (
-                                <span
-                                  key={i}
-                                  className="text-xs bg-gray-800 text-gray-400 px-2 py-0.5 rounded-md border border-gray-700"
-                                >
-                                  {b}
-                                </span>
-                              )
-                            })
-                          : <span className="text-gray-600">--</span>}
-                      </div>
-                    </td>
-
-                    {/* Net Profit on $1K */}
-                    <td className="px-6 py-3.5">
-                      <span className="text-green-400 font-semibold tabular-nums">
-                        ${netOn1K.toFixed(2)}
-                      </span>
-                    </td>
-
-                    {/* Annualized ROI */}
-                    <td className="px-6 py-3.5">
-                      {annRoi != null ? (
-                        <span className={`text-xs font-semibold tabular-nums ${annRoi >= 100 ? 'text-green-300' : annRoi >= 20 ? 'text-green-400' : 'text-gray-400'}`}>
-                          {annRoi >= 1000 ? `${(annRoi/1000).toFixed(0)}K%` : `${annRoi.toFixed(0)}%`}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-gray-600">--</span>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                        ) : <span className="text-xs text-gray-700 font-mono">--</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
-      {/* Pagination controls */}
       {sorted.length > ROWS_PER_PAGE && (
-        <div className="px-6 py-3 border-t border-gray-800 flex items-center justify-between">
-          <button
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            disabled={currentPage === 0}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              currentPage === 0
-                ? 'text-gray-600 cursor-not-allowed'
-                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-            }`}
-          >
+        <div className="px-5 py-3 border-t border-white/[0.04] flex items-center justify-between">
+          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={currentPage === 0}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${currentPage === 0 ? 'text-gray-700' : 'text-gray-400 hover:bg-white/[0.04]'}`}>
             Previous
           </button>
-          <span className="text-sm text-gray-500">
-            Page <span className="text-gray-300 font-medium">{currentPage + 1}</span> of{' '}
-            <span className="text-gray-300 font-medium">{totalPages}</span>
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-            disabled={currentPage >= totalPages - 1}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              currentPage >= totalPages - 1
-                ? 'text-gray-600 cursor-not-allowed'
-                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-            }`}
-          >
+          <span className="text-[11px] text-gray-600 font-mono">{currentPage + 1} / {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={currentPage >= totalPages - 1}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${currentPage >= totalPages - 1 ? 'text-gray-700' : 'text-gray-400 hover:bg-white/[0.04]'}`}>
             Next
           </button>
         </div>
@@ -405,22 +225,16 @@ export default function ArbTable({ opportunities, onSelectOpportunity }) {
   )
 }
 
-function CategoryBadge({ category }) {
-  const cat = (category || 'unknown').toLowerCase()
-  const colors = {
-    politics: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-    political: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-    sports: 'bg-green-500/10 text-green-400 border-green-500/20',
-    crypto: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-    economic: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-    entertainment: 'bg-pink-500/10 text-pink-400 border-pink-500/20',
-    science_tech: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    weather: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+function CatBadge({ category }) {
+  const cat = (category || '').toLowerCase()
+  const m = {
+    politics: 'text-purple-400 bg-purple-500/8 border-purple-500/15',
+    sports: 'text-emerald-400 bg-emerald-500/8 border-emerald-500/15',
+    crypto: 'text-amber-400 bg-amber-500/8 border-amber-500/15',
+    entertainment: 'text-pink-400 bg-pink-500/8 border-pink-500/15',
+    science_tech: 'text-blue-400 bg-blue-500/8 border-blue-500/15',
+    weather: 'text-cyan-400 bg-cyan-500/8 border-cyan-500/15',
   }
-  const cls = colors[cat] || 'bg-gray-500/10 text-gray-400 border-gray-500/20'
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border capitalize ${cls}`}>
-      {category || 'N/A'}
-    </span>
-  )
+  const cls = m[cat] || 'text-gray-500 bg-gray-500/8 border-gray-500/15'
+  return <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${cls}`}>{category || 'N/A'}</span>
 }

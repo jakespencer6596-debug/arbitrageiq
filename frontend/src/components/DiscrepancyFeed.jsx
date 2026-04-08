@@ -72,8 +72,8 @@ export default function DiscrepancyFeed({ discrepancies, stats }) {
   }, [rawDiscs])
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg shadow-black/20 overflow-hidden flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-gray-800">
+    <div className="bg-surface-1 rounded-2xl border border-white/[0.04] card-glow overflow-hidden flex flex-col h-full">
+      <div className="px-6 py-4 border-b border-white/[0.04]">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-gray-100">Value Signals</h2>
@@ -101,7 +101,7 @@ export default function DiscrepancyFeed({ discrepancies, stats }) {
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-800/50">
+          <div className="divide-y divide-white/[0.03]">
             {sorted.map((d, i) => (
               <DiscrepancyCard key={d.id || i} data={d} />
             ))}
@@ -203,7 +203,7 @@ function DiscrepancyCard({ data }) {
               <span className="text-gray-500 uppercase tracking-wide">Market</span>
               <span className="text-gray-300 font-bold tabular-nums">{marketProb.toFixed(1)}%</span>
             </div>
-            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
               <div
                 className="h-full bg-orange-500/70 rounded-full transition-all duration-500"
                 style={{ width: `${Math.min(100, Math.max(2, marketProb))}%` }}
@@ -216,7 +216,7 @@ function DiscrepancyCard({ data }) {
               <span className="text-gray-500 uppercase tracking-wide">Consensus</span>
               <span className="text-blue-400 font-bold tabular-nums">{consensusProb.toFixed(1)}%</span>
             </div>
-            <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div className="h-1.5 bg-surface-3 rounded-full overflow-hidden">
               <div
                 className="h-full bg-blue-500/70 rounded-full transition-all duration-500"
                 style={{ width: `${Math.min(100, Math.max(2, consensusProb))}%` }}
@@ -246,7 +246,7 @@ function DiscrepancyCard({ data }) {
               <h5 className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold mb-2">
                 Source Breakdown
               </h5>
-              <div className="bg-gray-800/40 rounded-lg border border-gray-700/50 divide-y divide-gray-700/30">
+              <div className="bg-surface-2/60 rounded-xl border border-white/[0.04] divide-y divide-white/[0.03]">
                 {sources.map((s, i) => {
                   const prob = s.prob * 100
                   const diff = prob - marketProb
@@ -290,7 +290,7 @@ function DiscrepancyCard({ data }) {
                 })}
 
                 {/* Summary row */}
-                <div className="flex items-center justify-between px-3 py-2 bg-gray-800/40">
+                <div className="flex items-center justify-between px-3 py-2 bg-surface-2/40">
                   <span className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                     Consensus (median)
                   </span>
