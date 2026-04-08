@@ -315,6 +315,13 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if implied_prob <= 0.01 or implied_prob >= 0.99:
             continue  # Skip extreme prices (noise)
 
+        # Skip events referencing past years (stale markets)
+        import re as _re
+        _past_years = {'2020', '2021', '2022', '2023', '2024'}
+        _found_years = set(_re.findall(r'\b(20\d{2})\b', event_name))
+        if _found_years and _found_years.issubset(_past_years):
+            continue
+
         # PredictIt has 15% combined fees — arbs are shown with fee warnings
         # but NOT excluded, as users may have mitigation strategies
 

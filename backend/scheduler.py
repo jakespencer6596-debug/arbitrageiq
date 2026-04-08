@@ -370,10 +370,15 @@ async def run_arb() -> None:
         ).update({"is_active": False})
         db.commit()
 
-        # 1. Load recent active prices
+        # 1. Load recent active prices — only those fetched within max age
+        # This prevents stale Metaforecast/GJOpen prices from creating false arbs
+        freshness_cutoff = datetime.utcnow() - timedelta(hours=PRICE_MAX_AGE_HOURS)
         prices = (
             db.query(MarketPrice)
-            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .filter(
+                MarketPrice.is_active == True,  # noqa: E712
+                MarketPrice.fetched_at >= freshness_cutoff,
+            )
             .all()
         )
 
