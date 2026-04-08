@@ -514,14 +514,14 @@ async def run_arb() -> None:
             )
             if existing:
                 existing.times_detected += 1
-                now = datetime.now(timezone.utc)
-                existing.last_seen_at = now
-                # Ensure both datetimes are tz-aware for subtraction
+                now_naive = datetime.utcnow()
+                existing.last_seen_at = now_naive
                 first = existing.first_detected_at
-                if first and first.tzinfo is None:
-                    first = first.replace(tzinfo=timezone.utc)
                 if first:
-                    existing.duration_seconds = int((now - first).total_seconds())
+                    # Strip tzinfo if present to avoid naive/aware mismatch
+                    if first.tzinfo is not None:
+                        first = first.replace(tzinfo=None)
+                    existing.duration_seconds = int((now_naive - first).total_seconds())
                 if d.get("profit_pct", 0) > existing.peak_profit_pct:
                     existing.peak_profit_pct = d.get("profit_pct", 0)
                     existing.legs_json = d
@@ -899,7 +899,7 @@ async def discover_markets() -> None:
                     tm.is_mapped = True
                     tm.data_sources = result.get("data_sources", [])
                     tm.category = result.get("category", tm.category)
-                    tm.last_updated = datetime.now(timezone.utc)
+                    tm.last_updated = datetime.utcnow()
                     mapped_count += 1
                     logger.info(
                         f"discover_markets: mapped {tm.source}:{tm.market_id} "
