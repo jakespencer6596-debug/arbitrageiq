@@ -324,6 +324,45 @@ async def fetch_cloudbet() -> None:
         logger.error(f"fetch_cloudbet failed: {exc}", exc_info=True)
 
 
+async def fetch_futuur() -> None:
+    """Fetch prediction market data from Futuur (real money, free API)."""
+    try:
+        from ingestion.futuur import FutuurClient
+        client = FutuurClient()
+        results = await client.fetch()
+        logger.info(f"fetch_futuur: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_futuur: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_futuur failed: {exc}", exc_info=True)
+
+
+async def fetch_insight() -> None:
+    """Fetch prediction market data from Insight Prediction (CFTC regulated, free API)."""
+    try:
+        from ingestion.insight import InsightClient
+        client = InsightClient()
+        results = await client.fetch()
+        logger.info(f"fetch_insight: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_insight: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_insight failed: {exc}", exc_info=True)
+
+
+async def fetch_azuro() -> None:
+    """Fetch decentralized sports betting data from Azuro Protocol (Polygon, free)."""
+    try:
+        from ingestion.azuro import AzuroClient
+        client = AzuroClient()
+        results = await client.fetch()
+        logger.info(f"fetch_azuro: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_azuro: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_azuro failed: {exc}", exc_info=True)
+
+
 async def fetch_weather() -> None:
     """Fetch latest weather data from Open-Meteo / NWS."""
     try:
@@ -1120,6 +1159,35 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         next_run_time=_now + timedelta(seconds=240),
+    )
+
+    # --- New data sources (Phase 5) ---
+    _scheduler.add_job(
+        fetch_futuur,
+        "interval",
+        seconds=300,
+        id="Futuur ingestion",
+        name="Futuur ingestion",
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=185),
+    )
+    _scheduler.add_job(
+        fetch_insight,
+        "interval",
+        seconds=300,
+        id="Insight ingestion",
+        name="Insight ingestion",
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=200),
+    )
+    _scheduler.add_job(
+        fetch_azuro,
+        "interval",
+        seconds=300,
+        id="Azuro ingestion",
+        name="Azuro ingestion",
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=215),
     )
 
     # --- Detection job (run after first data arrives) ---

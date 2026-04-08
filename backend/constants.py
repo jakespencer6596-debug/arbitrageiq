@@ -90,6 +90,21 @@ PLATFORM_FEES = {
         "withdrawal_fee": 0.00,
         "profit_fee": 0.00,
     },
+    "futuur": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.05,      # ~5% on winnings
+    },
+    "insight": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.00,
+    },
+    "azuro": {
+        "trade_fee": 0.00,       # protocol fees baked into odds
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.00,
+    },
 }
 
 # ---------------------------------------------------------------------------
