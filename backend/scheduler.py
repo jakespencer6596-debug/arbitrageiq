@@ -363,6 +363,32 @@ async def fetch_azuro() -> None:
         logger.error(f"fetch_azuro failed: {exc}", exc_info=True)
 
 
+async def fetch_limitless() -> None:
+    """Fetch prediction market data from Limitless Exchange (Base chain, free API)."""
+    try:
+        from ingestion.limitless import LimitlessClient
+        client = LimitlessClient()
+        results = await client.fetch()
+        logger.info(f"fetch_limitless: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_limitless: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_limitless failed: {exc}", exc_info=True)
+
+
+async def fetch_drift() -> None:
+    """Fetch prediction market data from Drift Protocol BET (Solana, free API)."""
+    try:
+        from ingestion.drift import DriftClient
+        client = DriftClient()
+        results = await client.fetch()
+        logger.info(f"fetch_drift: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_drift: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_drift failed: {exc}", exc_info=True)
+
+
 async def fetch_weather() -> None:
     """Fetch latest weather data from Open-Meteo / NWS."""
     try:
@@ -1188,6 +1214,25 @@ def start_scheduler() -> None:
         name="Azuro ingestion",
         max_instances=1,
         next_run_time=_now + timedelta(seconds=215),
+    )
+
+    _scheduler.add_job(
+        fetch_limitless,
+        "interval",
+        seconds=300,
+        id="Limitless ingestion",
+        name="Limitless ingestion",
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=225),
+    )
+    _scheduler.add_job(
+        fetch_drift,
+        "interval",
+        seconds=300,
+        id="Drift ingestion",
+        name="Drift ingestion",
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=235),
     )
 
     # --- Detection job (run after first data arrives) ---

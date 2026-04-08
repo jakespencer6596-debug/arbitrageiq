@@ -255,7 +255,7 @@ MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
 TRADEABLE_SOURCES = frozenset({
     "polymarket", "kalshi", "predictit", "smarkets", "sxbet",
     "betfair", "matchbook", "cloudbet", "opinion",
-    "futuur", "insight", "azuro",
+    "futuur", "insight", "azuro", "limitless", "drift",
     # Odds API sportsbooks
     "draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
     "betrivers", "bovada", "bet365", "pinnacle",

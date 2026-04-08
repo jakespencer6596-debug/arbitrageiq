@@ -105,6 +105,16 @@ PLATFORM_FEES = {
         "withdrawal_fee": 0.00,
         "profit_fee": 0.00,
     },
+    "limitless": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.02,      # ~2% protocol fee
+    },
+    "drift": {
+        "trade_fee": 0.001,      # 0.1% taker fee
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.00,
+    },
 }
 
 # ---------------------------------------------------------------------------
