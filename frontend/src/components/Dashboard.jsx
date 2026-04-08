@@ -4,6 +4,7 @@ import DiscrepancyFeed from './DiscrepancyFeed'
 import MarketMap from './MarketMap'
 import LiveFeed from './LiveFeed'
 import PaywallOverlay from './PaywallOverlay'
+import CategoryFilter from './CategoryFilter'
 
 const CATEGORY_LABELS = {
   politics: { name: 'Politics', color: 'purple' },
@@ -28,6 +29,7 @@ const CATEGORY_DOT_COLORS = {
 export default function Dashboard({
   activeCategory,
   onChangeCategory,
+  onSelectCategory,
   opportunities,
   discrepancies,
   markets,
@@ -49,9 +51,15 @@ export default function Dashboard({
 }) {
   const activeArbs = stats?.active_arbs ?? opportunities?.length ?? 0
   const activeDiscs = stats?.active_discrepancies ?? discrepancies?.length ?? 0
+  const totalMarkets = stats?.total_markets ?? 0
+  const activePrices = stats?.active_prices ?? 0
+  const sourceCount = stats?.source_count ?? 0
+  const platformCount = stats?.platform_count ?? 0
   const isConnected = apiConnected || wsConnected
   const isLoading = stats === null
-  const catInfo = CATEGORY_LABELS[activeCategory] || { name: activeCategory, color: 'gray' }
+  const catInfo = activeCategory
+    ? (CATEGORY_LABELS[activeCategory] || { name: activeCategory, color: 'gray' })
+    : { name: 'All Markets', color: 'green' }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -66,23 +74,20 @@ export default function Dashboard({
             <span className="hidden sm:inline text-xs text-gray-500 font-medium border border-gray-700 rounded px-1.5 py-0.5">
               BETA
             </span>
-            {/* Active category badge */}
-            <div className="flex items-center gap-2 ml-2">
+            {/* Active category indicator */}
+            <div className="hidden lg:flex items-center gap-2 ml-2">
               <span className={`w-2 h-2 rounded-full ${CATEGORY_DOT_COLORS[catInfo.color] || 'bg-gray-400'}`} />
               <span className="text-sm font-medium text-gray-300">{catInfo.name}</span>
-              <button
-                onClick={onChangeCategory}
-                className="text-xs text-gray-500 hover:text-gray-300 transition-colors ml-1 px-2 py-0.5 rounded border border-gray-700 hover:border-gray-500"
-              >
-                Change
-              </button>
             </div>
           </div>
 
           {/* Centre stats badges */}
           <div className="hidden md:flex items-center gap-3">
+            <StatBadge label="Markets" value={totalMarkets.toLocaleString()} color="blue" />
+            <StatBadge label="Prices" value={activePrices.toLocaleString()} color="blue" />
             <StatBadge label="Arbs" value={activeArbs} color="green" />
-            <StatBadge label="Signals" value={activeDiscs} color="blue" />
+            <StatBadge label="Signals" value={activeDiscs} color="yellow" />
+            <StatBadge label="Sources" value={sourceCount} color="blue" />
           </div>
 
           {/* Right side */}
@@ -136,14 +141,32 @@ export default function Dashboard({
         </div>
       </nav>
 
-      {/* ── Mobile stats row ── */}
-      <div className="md:hidden flex items-center gap-2 px-4 py-2 overflow-x-auto bg-gray-900/50 border-b border-gray-800">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${CATEGORY_DOT_COLORS[catInfo.color] || 'bg-gray-400'}`} />
-          <span className="text-xs text-gray-300 font-medium">{catInfo.name}</span>
+      {/* ── Category Filter Bar ── */}
+      <div className="bg-gray-900/50 border-b border-gray-800 px-4 sm:px-6 lg:px-8 py-3">
+        <div className="max-w-[1920px] mx-auto flex items-center justify-between gap-4">
+          <CategoryFilter
+            activeCategory={activeCategory}
+            onSelectCategory={onSelectCategory || onChangeCategory}
+          />
+          <div className="md:hidden flex items-center gap-2">
+            <StatBadge label="Arbs" value={activeArbs} color="green" />
+          </div>
         </div>
-        <StatBadge label="Arbs" value={activeArbs} color="green" />
       </div>
+
+      {/* ── Hero Stats Bar ── */}
+      {!isLoading && (
+        <div className="bg-gray-900/30 border-b border-gray-800/50 px-4 sm:px-6 lg:px-8 py-4">
+          <div className="max-w-[1920px] mx-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            <HeroStat label="Markets Monitored" value={totalMarkets.toLocaleString()} />
+            <HeroStat label="Active Price Feeds" value={activePrices.toLocaleString()} />
+            <HeroStat label="Data Sources" value={sourceCount} />
+            <HeroStat label="Platforms" value={platformCount} />
+            <HeroStat label="Active Arbs" value={activeArbs} highlight />
+            <HeroStat label="Signals" value={activeDiscs} />
+          </div>
+        </div>
+      )}
 
       {/* ── Loading State ── */}
       {isLoading && (
@@ -152,8 +175,8 @@ export default function Dashboard({
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="text-gray-400 text-sm font-medium">Scanning {catInfo.name} markets...</p>
-          <p className="text-gray-600 text-xs mt-1">Fetching data from prediction markets and analyzing for arbitrage</p>
+          <p className="text-gray-400 text-sm font-medium">Scanning markets across all platforms...</p>
+          <p className="text-gray-600 text-xs mt-1">Fetching data from prediction markets, sportsbooks &amp; exchanges</p>
         </div>
       )}
 
@@ -225,6 +248,17 @@ export default function Dashboard({
       {showLiveFeed && (
         <LiveFeed events={liveFeed} onClose={() => onToggleLiveFeed()} />
       )}
+    </div>
+  )
+}
+
+function HeroStat({ label, value, highlight }) {
+  return (
+    <div className="text-center">
+      <div className={`text-2xl font-bold tabular-nums ${highlight ? 'text-green-400' : 'text-gray-100'}`}>
+        {value}
+      </div>
+      <div className="text-[10px] uppercase tracking-wider text-gray-500 mt-0.5">{label}</div>
     </div>
   )
 }

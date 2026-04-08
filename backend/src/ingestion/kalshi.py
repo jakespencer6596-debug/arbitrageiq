@@ -24,7 +24,7 @@ from ingestion.categorize import categorise
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
-_MAX_PAGES = 5  # Reduced from 10 to save memory
+_MAX_PAGES = 10  # Increased for broader coverage
 
 
 class KalshiClient:
@@ -177,11 +177,6 @@ class KalshiClient:
             A list of dicts with keys: source, market_id, title, yes_price,
             no_price, category, volume, timestamp.
         """
-        # Skip if no category selected
-        if constants.ACTIVE_CATEGORY is None:
-            logger.info("Kalshi: no active category — skipping")
-            return []
-
         results: list[dict] = []
         cursor: str | None = None
         page_count = 0
@@ -271,9 +266,7 @@ class KalshiClient:
             self._update_system_status(error=str(exc))
             return results
 
-        # Filter to active category only
-        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
-        logger.info(f"Kalshi: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+        logger.info(f"Kalshi: {len(results)} rows across all categories")
 
         if not results:
             self._update_system_status()
@@ -285,30 +278,46 @@ class KalshiClient:
         try:
             db = SessionLocal()
             try:
-                # Deactivate old Kalshi prices before inserting fresh ones
-                db.query(MarketPrice).filter(
-                    MarketPrice.source == "kalshi",
-                    MarketPrice.is_active == True,  # noqa: E712
-                ).update({"is_active": False})
-
                 for r in results:
-                    db.add(
-                        MarketPrice(
-                            source="kalshi",
-                            market_id=r["market_id"],
-                            event_name=r["title"],
-                            market_title=r["title"],
-                            outcome="yes",
-                            implied_probability=r["yes_price"],
-                            category=r["category"],
-                            yes_price=r["yes_price"],
-                            no_price=r["no_price"],
-                            volume=r.get("volume"),
-                            open_interest=r.get("open_interest"),
-                            raw_payload=r.get("raw"),
-                            fetched_at=r["timestamp"],
+                    # Upsert: update existing active row or insert new one
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == "kalshi",
+                            MarketPrice.market_id == r["market_id"],
+                            MarketPrice.outcome == "yes",
                         )
+                        .first()
                     )
+                    if existing:
+                        existing.implied_probability = r["yes_price"]
+                        existing.yes_price = r["yes_price"]
+                        existing.no_price = r["no_price"]
+                        existing.volume = r.get("volume")
+                        existing.open_interest = r.get("open_interest")
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = r["title"]
+                        existing.category = r["category"]
+                    else:
+                        db.add(
+                            MarketPrice(
+                                source="kalshi",
+                                market_id=r["market_id"],
+                                event_name=r["title"],
+                                market_title=r["title"],
+                                outcome="yes",
+                                implied_probability=r["yes_price"],
+                                category=r["category"],
+                                yes_price=r["yes_price"],
+                                no_price=r["no_price"],
+                                volume=r.get("volume"),
+                                open_interest=r.get("open_interest"),
+                                raw_payload=r.get("raw"),
+                                fetched_at=r["timestamp"],
+                            )
+                        )
 
                     # Auto-discover / track the market
                     self._upsert_tracked_market(

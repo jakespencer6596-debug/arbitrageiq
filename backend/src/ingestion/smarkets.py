@@ -85,7 +85,7 @@ class SmarketsClient:
             pass
         return []
 
-    async def _get_markets_and_quotes(self, client: httpx.AsyncClient, event_id: int, event_name: str) -> list[dict]:
+    async def _get_markets_and_quotes(self, client: httpx.AsyncClient, event_id: int, event_name: str, parent_id: int = 0) -> list[dict]:
         """Get markets, contracts, and live quotes for an event."""
         results = []
         try:
@@ -133,8 +133,8 @@ class SmarketsClient:
                     full_name = f"{event_name}: {contract_name}" if event_name != market_name else f"{market_name}: {contract_name}"
                     category = categorise(full_name)
 
-                    # Override: if we fetched from political parent IDs, force politics
-                    if constants.ACTIVE_CATEGORY == "politics":
+                    # Override: if fetched from known political parent IDs, force politics
+                    if parent_id in POLITICAL_PARENT_IDS:
                         category = "politics"
 
                     results.append({
@@ -157,19 +157,17 @@ class SmarketsClient:
         return results
 
     async def fetch(self) -> list[dict]:
-        """Fetch political prediction market data from Smarkets."""
-        if constants.ACTIVE_CATEGORY is None:
-            logger.info("Smarkets: no active category — skipping")
-            return []
-
+        """Fetch prediction market data from Smarkets across all categories."""
         results: list[dict] = []
 
         try:
             async with httpx.AsyncClient(timeout=20) as client:
-                # Get events based on category
-                parent_ids = CATEGORY_OVERRIDES.get(constants.ACTIVE_CATEGORY, POLITICAL_PARENT_IDS)
+                # Fetch from ALL parent IDs (politics + any others)
+                all_parent_ids = set(POLITICAL_PARENT_IDS)
+                for ids in CATEGORY_OVERRIDES.values():
+                    all_parent_ids.update(ids)
 
-                for parent_id in parent_ids:
+                for parent_id in all_parent_ids:
                     # Get child events
                     child_events = await self._get_child_events(client, parent_id)
 
@@ -178,14 +176,14 @@ class SmarketsClient:
                         event_name = event.get("name", "")
 
                         # Get markets + quotes for this event
-                        event_results = await self._get_markets_and_quotes(client, event_id, event_name)
+                        event_results = await self._get_markets_and_quotes(client, event_id, event_name, parent_id)
                         results.extend(event_results)
 
                         # Also check sub-events (Smarkets uses nested hierarchy)
                         sub_events = await self._get_child_events(client, event_id)
                         for sub in sub_events:
                             sub_results = await self._get_markets_and_quotes(
-                                client, sub.get("id"), sub.get("name", event_name)
+                                client, sub.get("id"), sub.get("name", event_name), parent_id
                             )
                             results.extend(sub_results)
 
@@ -196,9 +194,7 @@ class SmarketsClient:
             self._update_system_status(error=str(exc))
             return results
 
-        # Filter to active category
-        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
-        logger.info(f"Smarkets: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+        logger.info(f"Smarkets: {len(results)} rows across all categories")
 
         if not results:
             self._update_system_status()
@@ -208,27 +204,44 @@ class SmarketsClient:
         try:
             db = SessionLocal()
             try:
-                db.query(MarketPrice).filter(
-                    MarketPrice.source == "smarkets",
-                    MarketPrice.is_active == True,
-                ).update({"is_active": False})
-
                 for r in results:
-                    db.add(MarketPrice(
-                        source="smarkets",
-                        market_id=r["market_id"],
-                        event_name=r["title"],
-                        market_title=r["title"],
-                        outcome=r["outcome"],
-                        implied_probability=r["yes_price"],
-                        category=r["category"],
-                        yes_price=r["yes_price"],
-                        no_price=r["no_price"],
-                        volume=r.get("volume"),
-                        raw_payload=None,
-                        fetched_at=r["timestamp"],
-                        metadata_={"url": r["url"], "bid": r["bid"], "ask": r["ask"]},
-                    ))
+                    # Upsert
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == "smarkets",
+                            MarketPrice.market_id == r["market_id"],
+                            MarketPrice.outcome == r["outcome"],
+                        )
+                        .first()
+                    )
+                    if existing:
+                        existing.implied_probability = r["yes_price"]
+                        existing.yes_price = r["yes_price"]
+                        existing.no_price = r["no_price"]
+                        existing.volume = r.get("volume")
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = r["title"]
+                        existing.category = r["category"]
+                        existing.metadata_ = {"url": r["url"], "bid": r["bid"], "ask": r["ask"]}
+                    else:
+                        db.add(MarketPrice(
+                            source="smarkets",
+                            market_id=r["market_id"],
+                            event_name=r["title"],
+                            market_title=r["title"],
+                            outcome=r["outcome"],
+                            implied_probability=r["yes_price"],
+                            category=r["category"],
+                            yes_price=r["yes_price"],
+                            no_price=r["no_price"],
+                            volume=r.get("volume"),
+                            raw_payload=None,
+                            fetched_at=r["timestamp"],
+                            metadata_={"url": r["url"], "bid": r["bid"], "ask": r["ask"]},
+                        ))
 
                 db.commit()
                 logger.info(f"Saved {len(results)} Smarkets prices to database")

@@ -29,15 +29,22 @@ async function request(path, options = {}) {
 
   const res = await fetch(url, { headers, ...options })
 
-  if (res.status === 401) {
-    // Token expired or invalid — clear and let app handle redirect
-    setToken(null)
-    throw new Error('Session expired. Please log in again.')
-  }
-
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText)
-    throw new Error(`API ${res.status}: ${text}`)
+    // Try to parse JSON error body first
+    let errorMsg = res.statusText
+    try {
+      const errData = await res.json()
+      errorMsg = errData.error || errData.detail || JSON.stringify(errData)
+    } catch {
+      errorMsg = await res.text().catch(() => res.statusText)
+    }
+
+    if (res.status === 401) {
+      setToken(null)
+      throw new Error(errorMsg || 'Session expired. Please log in again.')
+    }
+
+    throw new Error(errorMsg)
   }
   return res.json()
 }

@@ -28,7 +28,7 @@ METAFORECAST_URL = "https://metaforecast.org/api/graphql"
 
 GRAPHQL_QUERY = """
 {
-  questions(first: 200) {
+  questions(first: 500) {
     edges {
       node {
         id
@@ -102,10 +102,6 @@ class MetaforecastClient:
         Fetch prediction data from Metaforecast GraphQL API.
         Returns normalized rows for value bet comparison.
         """
-        if constants.ACTIVE_CATEGORY is None:
-            logger.info("Metaforecast: no active category — skipping")
-            return []
-
         results: list[dict] = []
 
         try:
@@ -140,10 +136,6 @@ class MetaforecastClient:
 
                 category = categorise(title)
 
-                # Only keep markets matching active category
-                if category != constants.ACTIVE_CATEGORY:
-                    continue
-
                 # Extract YES probability from options
                 yes_prob = None
                 for opt in options:
@@ -176,7 +168,7 @@ class MetaforecastClient:
             self._update_system_status(error=str(exc))
             return results
 
-        logger.info(f"Metaforecast: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+        logger.info(f"Metaforecast: {len(results)} rows across all categories")
 
         if not results:
             self._update_system_status()
@@ -186,29 +178,44 @@ class MetaforecastClient:
         try:
             db = SessionLocal()
             try:
-                # Deactivate old metaforecast prices
-                for src in set(r["source"] for r in results):
-                    db.query(MarketPrice).filter(
-                        MarketPrice.source == src,
-                        MarketPrice.is_active == True,
-                    ).update({"is_active": False})
-
                 for r in results:
-                    db.add(MarketPrice(
-                        source=r["source"],
-                        market_id=r["market_id"],
-                        event_name=r["title"],
-                        market_title=r["title"],
-                        outcome="yes",
-                        implied_probability=r["yes_price"],
-                        category=r["category"],
-                        yes_price=r["yes_price"],
-                        no_price=round(1.0 - r["yes_price"], 4),
-                        volume=r["volume"],
-                        raw_payload=None,
-                        fetched_at=r["timestamp"],
-                        metadata_={"url": r["url"], "platform": r["platform_label"], "num_forecasts": r["num_forecasts"]},
-                    ))
+                    # Upsert
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == r["source"],
+                            MarketPrice.market_id == r["market_id"],
+                            MarketPrice.outcome == "yes",
+                        )
+                        .first()
+                    )
+                    if existing:
+                        existing.implied_probability = r["yes_price"]
+                        existing.yes_price = r["yes_price"]
+                        existing.no_price = round(1.0 - r["yes_price"], 4)
+                        existing.volume = r["volume"]
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = r["title"]
+                        existing.category = r["category"]
+                        existing.metadata_ = {"url": r["url"], "platform": r["platform_label"], "num_forecasts": r["num_forecasts"]}
+                    else:
+                        db.add(MarketPrice(
+                            source=r["source"],
+                            market_id=r["market_id"],
+                            event_name=r["title"],
+                            market_title=r["title"],
+                            outcome="yes",
+                            implied_probability=r["yes_price"],
+                            category=r["category"],
+                            yes_price=r["yes_price"],
+                            no_price=round(1.0 - r["yes_price"], 4),
+                            volume=r["volume"],
+                            raw_payload=None,
+                            fetched_at=r["timestamp"],
+                            metadata_={"url": r["url"], "platform": r["platform_label"], "num_forecasts": r["num_forecasts"]},
+                        ))
 
                 db.commit()
                 logger.info(f"Saved {len(results)} Metaforecast prices to database")

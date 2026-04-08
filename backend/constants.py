@@ -30,8 +30,8 @@ MANIFOLD_POLL_SECONDS = 300
 KEEPALIVE_SECONDS = 540
 
 # DB cleanup — keep only this many recent rows per source to cap memory
-MAX_PRICES_PER_SOURCE = 200
-PRICE_MAX_AGE_HOURS = 2
+MAX_PRICES_PER_SOURCE = 1000
+PRICE_MAX_AGE_HOURS = 6
 
 MIN_ARB_PROFIT_PCT = 0.001  # 0.1% — real cross-bookmaker arbs are small
 
@@ -70,6 +70,26 @@ PLATFORM_FEES = {
         "withdrawal_fee": 0.00,
         "profit_fee": 0.02,      # 2% commission
     },
+    "opinion": {
+        "trade_fee": 0.00,       # 0% maker fee
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.00,
+    },
+    "betfair": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.05,      # ~5% commission on net winnings (varies by market)
+    },
+    "matchbook": {
+        "trade_fee": 0.00,
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.02,      # ~2% commission
+    },
+    "cloudbet": {
+        "trade_fee": 0.01,       # ~1% spread
+        "withdrawal_fee": 0.00,
+        "profit_fee": 0.00,
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -87,11 +107,12 @@ CATEGORY_DISPLAY = {
     "other":        {"name": "Other",                "description": "Everything else — miscellaneous prediction markets"},
 }
 
-# Server-side active category — set via POST /api/category
-ACTIVE_CATEGORY: str | None = None
+# Server-side display filter — used by frontend to filter what's shown.
+# Backend fetches ALL categories regardless of this setting.
+DISPLAY_CATEGORY: str | None = None
 
-# Manifold quality filter
-MANIFOLD_MIN_VOLUME = 500
+# Manifold quality filter — lowered to capture more markets
+MANIFOLD_MIN_VOLUME = 100
 
 KEYWORD_MAP = {
     # --- Politics ---
@@ -155,4 +176,35 @@ KEYWORD_MAP = {
     "weather": "weather", "degrees": "weather", "fahrenheit": "weather",
     "celsius": "weather", "heat": "weather", "frost": "weather",
     "drought": "weather", "flood": "weather", "wildfire": "weather",
+}
+
+# ---------------------------------------------------------------------------
+# Backwards compat: code that imports ACTIVE_CATEGORY still works
+# ---------------------------------------------------------------------------
+ACTIVE_CATEGORY = None  # DEPRECATED — use DISPLAY_CATEGORY. Always fetch all.
+
+# ---------------------------------------------------------------------------
+# Discrepancy engine thresholds — minimum edge % per category to report
+# ---------------------------------------------------------------------------
+THRESHOLDS = {
+    "weather": 0.15,
+    "crypto": 0.15,
+    "politics": 0.10,
+    "sports": 0.05,
+    "entertainment": 0.10,
+    "science_tech": 0.10,
+    "other": 0.10,
+}
+
+# ---------------------------------------------------------------------------
+# FRED economic data series — used by discrepancy engine
+# ---------------------------------------------------------------------------
+FRED_SERIES = {
+    "SP500": {"label": "S&P 500", "unit": "index"},
+    "UNRATE": {"label": "Unemployment Rate", "unit": "percent"},
+    "CPIAUCSL": {"label": "CPI", "unit": "index"},
+    "FEDFUNDS": {"label": "Federal Funds Rate", "unit": "percent"},
+    "GDP": {"label": "GDP", "unit": "billions"},
+    "T10YIE": {"label": "10Y Breakeven Inflation", "unit": "percent"},
+    "DFF": {"label": "Effective Federal Funds Rate", "unit": "percent"},
 }

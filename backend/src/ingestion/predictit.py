@@ -135,11 +135,6 @@ class PredictItClient:
             market_name, contract_name, yes_price, no_price, category,
             timestamp.
         """
-        # Skip if no category selected
-        if constants.ACTIVE_CATEGORY is None:
-            logger.info("PredictIt: no active category — skipping")
-            return []
-
         results: list[dict] = []
 
         try:
@@ -218,9 +213,7 @@ class PredictItClient:
             self._update_system_status(error=str(exc))
             return results
 
-        # Filter to active category only
-        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
-        logger.info(f"PredictIt: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+        logger.info(f"PredictIt: {len(results)} rows across all categories")
 
         if not results:
             self._update_system_status()
@@ -232,37 +225,50 @@ class PredictItClient:
         try:
             db = SessionLocal()
             try:
-                # Deactivate old PredictIt prices before inserting fresh ones
-                db.query(MarketPrice).filter(
-                    MarketPrice.source == "predictit",
-                    MarketPrice.is_active == True,  # noqa: E712
-                ).update({"is_active": False})
-
                 seen_markets: set[str] = set()
 
                 for r in results:
-                    # Composite ID: market + contract
                     composite_id = f"{r['market_id']}_{r['contract_id']}"
                     title = f"{r['market_name']} -- {r['contract_name']}"
 
-                    db.add(
-                        MarketPrice(
-                            source="predictit",
-                            market_id=composite_id,
-                            event_name=title,
-                            market_title=title,
-                            outcome="yes",
-                            implied_probability=r["yes_price"],
-                            category=r["category"],
-                            yes_price=r["yes_price"],
-                            no_price=r["no_price"],
-                            last_traded_price=r["yes_price"],
-                            raw_payload=r.get("raw"),
-                            fetched_at=r["timestamp"],
+                    # Upsert
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == "predictit",
+                            MarketPrice.market_id == composite_id,
+                            MarketPrice.outcome == "yes",
                         )
+                        .first()
                     )
+                    if existing:
+                        existing.implied_probability = r["yes_price"]
+                        existing.yes_price = r["yes_price"]
+                        existing.no_price = r["no_price"]
+                        existing.last_traded_price = r["yes_price"]
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = title
+                        existing.category = r["category"]
+                    else:
+                        db.add(
+                            MarketPrice(
+                                source="predictit",
+                                market_id=composite_id,
+                                event_name=title,
+                                market_title=title,
+                                outcome="yes",
+                                implied_probability=r["yes_price"],
+                                category=r["category"],
+                                yes_price=r["yes_price"],
+                                no_price=r["no_price"],
+                                last_traded_price=r["yes_price"],
+                                raw_payload=r.get("raw"),
+                                fetched_at=r["timestamp"],
+                            )
+                        )
 
-                    # Auto-discover at market level (not contract level)
                     mid = r["market_id"]
                     if mid not in seen_markets:
                         seen_markets.add(mid)

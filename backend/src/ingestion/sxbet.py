@@ -60,18 +60,13 @@ class SXBetClient:
             logger.debug(f"Could not update SystemStatus for sxbet: {exc}")
 
     async def fetch(self) -> list[dict]:
-        """Fetch active markets from SX Bet."""
-        if constants.ACTIVE_CATEGORY is None:
-            logger.info("SX Bet: no active category — skipping")
-            return []
-
+        """Fetch active markets from SX Bet across all categories."""
         # Circuit breaker: if 10+ consecutive failures, skip
         try:
             db = SessionLocal()
             status = db.query(SystemStatus).filter(SystemStatus.source == "sxbet").first()
             if status and (status.consecutive_failures or 0) >= 10:
                 logger.debug("SX Bet: circuit breaker active, skipping")
-                # Reset after 1 hour
                 if status.last_failure_at:
                     from datetime import timedelta
                     if datetime.now(timezone.utc) - status.last_failure_at.replace(tzinfo=timezone.utc) > timedelta(hours=1):
@@ -88,42 +83,39 @@ class SXBetClient:
         except Exception:
             pass
 
-        # Get sport ID for active category
-        sport_id = SPORT_ID_MAP.get(constants.ACTIVE_CATEGORY)
-        if sport_id is None:
-            logger.debug(f"SX Bet: no sport ID for category '{constants.ACTIVE_CATEGORY}' — skipping")
-            return []
-
         results: list[dict] = []
 
         try:
             async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.get(
-                    f"{SXBET_BASE}/markets/active",
-                    params={"sportId": sport_id, "pageSize": 100},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+                # Fetch ALL sport IDs instead of just the active category
+                for cat_name, sport_id in SPORT_ID_MAP.items():
+                    try:
+                        resp = await client.get(
+                            f"{SXBET_BASE}/markets/active",
+                            params={"sportId": sport_id, "pageSize": 100},
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
 
-                markets = data.get("data", [])
-                logger.info(f"SX Bet: received {len(markets)} markets for sport {sport_id}")
-
-                for mkt in markets:
-                    market_hash = mkt.get("marketHash", "")
-                    title = mkt.get("title", "") or mkt.get("teamOneName", "")
-                    outcome1 = mkt.get("teamOneName", "Yes")
-                    outcome2 = mkt.get("teamTwoName", "No")
-
-                    # SX Bet uses implied odds format
-                    line = mkt.get("line")
-                    spread = mkt.get("spread")
-
-                    if not title or not market_hash:
+                        markets = data.get("data", [])
+                        logger.info(f"SX Bet: received {len(markets)} markets for sport {sport_id} ({cat_name})")
+                    except Exception as exc:
+                        logger.debug(f"SX Bet: failed to fetch sport {sport_id}: {exc}")
                         continue
 
-                    category = categorise(title)
-                    if category != constants.ACTIVE_CATEGORY:
-                        continue
+                    for mkt in markets:
+                        market_hash = mkt.get("marketHash", "")
+                        title = mkt.get("title", "") or mkt.get("teamOneName", "")
+                        outcome1 = mkt.get("teamOneName", "Yes")
+                        outcome2 = mkt.get("teamTwoName", "No")
+
+                        line = mkt.get("line")
+                        spread = mkt.get("spread")
+
+                        if not title or not market_hash:
+                            continue
+
+                        category = categorise(title)
 
                     # Try to get best prices from orderbook
                     try:
@@ -162,7 +154,7 @@ class SXBetClient:
             self._update_system_status(error=str(exc))
             return results
 
-        logger.info(f"SX Bet: {len(results)} rows match active category")
+        logger.info(f"SX Bet: {len(results)} rows across all categories")
 
         if not results:
             self._update_system_status()
@@ -172,26 +164,42 @@ class SXBetClient:
         try:
             db = SessionLocal()
             try:
-                db.query(MarketPrice).filter(
-                    MarketPrice.source == "sxbet",
-                    MarketPrice.is_active == True,
-                ).update({"is_active": False})
-
                 for r in results:
-                    db.add(MarketPrice(
-                        source="sxbet",
-                        market_id=r["market_id"],
-                        event_name=r["title"],
-                        market_title=r["title"],
-                        outcome=r["outcome"],
-                        implied_probability=r["yes_price"],
-                        category=r["category"],
-                        yes_price=r["yes_price"],
-                        no_price=r["no_price"],
-                        volume=r.get("volume"),
-                        raw_payload=None,
-                        fetched_at=r["timestamp"],
-                    ))
+                    # Upsert
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == "sxbet",
+                            MarketPrice.market_id == r["market_id"],
+                            MarketPrice.outcome == r["outcome"],
+                        )
+                        .first()
+                    )
+                    if existing:
+                        existing.implied_probability = r["yes_price"]
+                        existing.yes_price = r["yes_price"]
+                        existing.no_price = r["no_price"]
+                        existing.volume = r.get("volume")
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = r["title"]
+                        existing.category = r["category"]
+                    else:
+                        db.add(MarketPrice(
+                            source="sxbet",
+                            market_id=r["market_id"],
+                            event_name=r["title"],
+                            market_title=r["title"],
+                            outcome=r["outcome"],
+                            implied_probability=r["yes_price"],
+                            category=r["category"],
+                            yes_price=r["yes_price"],
+                            no_price=r["no_price"],
+                            volume=r.get("volume"),
+                            raw_payload=None,
+                            fetched_at=r["timestamp"],
+                        ))
 
                 db.commit()
                 logger.info(f"Saved {len(results)} SX Bet prices to database")

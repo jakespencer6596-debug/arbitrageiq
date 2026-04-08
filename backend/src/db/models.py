@@ -278,15 +278,22 @@ def get_session():
 
 def cleanup_old_data(max_age_hours: int = 6, max_per_source: int = 500):
     """
-    Purge old MarketPrice rows and expired arbs/discrepancies to keep
-    memory and DB size under control on the 512 MB Render Starter plan.
+    Deactivate stale prices and expire old arbs/discrepancies.
+
+    IMPORTANT: We do NOT delete MarketPrice or ArbOpportunity rows —
+    they are kept for historical analytics. We only deactivate them
+    so the arb engine ignores stale data. Old discrepancies and
+    inactive TrackedMarkets are still pruned.
     """
     db = SessionLocal()
     try:
         cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=max_age_hours)
 
-        # Delete old market prices
-        old_prices = db.query(MarketPrice).filter(MarketPrice.timestamp < cutoff).delete()
+        # Deactivate old market prices (keep rows for history)
+        old_prices = db.query(MarketPrice).filter(
+            MarketPrice.timestamp < cutoff,
+            MarketPrice.is_active == True,  # noqa: E712
+        ).update({"is_active": False})
 
         # Deactivate stale prices (older than 1 hour)
         stale_cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=1)
@@ -295,21 +302,32 @@ def cleanup_old_data(max_age_hours: int = 6, max_per_source: int = 500):
             MarketPrice.is_active == True,  # noqa: E712
         ).update({"is_active": False})
 
-        # Delete expired arbs older than 2 hours
+        # Deactivate expired arbs (keep rows for history / ArbHistory)
         arb_cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=2)
         old_arbs = db.query(ArbOpportunity).filter(
-            ArbOpportunity.detected_at < arb_cutoff
-        ).delete()
+            ArbOpportunity.detected_at < arb_cutoff,
+            ArbOpportunity.is_active == True,  # noqa: E712
+        ).update({"is_active": False, "expired_at": datetime.utcnow()})
 
-        # Delete expired discrepancies older than 2 hours
+        # Delete expired discrepancies older than 24 hours (less important for history)
+        disc_cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=24)
         old_discs = db.query(Discrepancy).filter(
-            Discrepancy.detected_at < arb_cutoff
+            Discrepancy.detected_at < disc_cutoff
         ).delete()
 
-        # Trim TrackedMarket table to prevent unbounded growth
-        tracked_cutoff = datetime.utcnow() - __import__('datetime').timedelta(hours=24)
+        # Trim inactive TrackedMarkets older than 7 days
+        tracked_cutoff = datetime.utcnow() - __import__('datetime').timedelta(days=7)
         old_tracked = db.query(TrackedMarket).filter(
             TrackedMarket.is_active == False,  # noqa: E712
+            TrackedMarket.last_updated < tracked_cutoff,
+        ).delete()
+
+        # Purge very old inactive MarketPrice rows (>30 days) to prevent unbounded growth
+        # This keeps ~30 days of history for analytics while bounding DB size
+        archive_cutoff = datetime.utcnow() - __import__('datetime').timedelta(days=30)
+        purged_prices = db.query(MarketPrice).filter(
+            MarketPrice.timestamp < archive_cutoff,
+            MarketPrice.is_active == False,  # noqa: E712
         ).delete()
 
         db.commit()
@@ -324,7 +342,8 @@ def cleanup_old_data(max_age_hours: int = 6, max_per_source: int = 500):
             except Exception:
                 pass
 
-        return {"prices": old_prices, "arbs": old_arbs, "discrepancies": old_discs}
+        return {"deactivated_prices": old_prices, "deactivated_arbs": old_arbs,
+                "deleted_discs": old_discs, "purged_30d": purged_prices}
     except Exception:
         db.rollback()
         return {}

@@ -239,6 +239,90 @@ async def fetch_metaforecast() -> None:
         logger.error(f"fetch_metaforecast failed: {exc}", exc_info=True)
 
 
+async def fetch_odds_api_io() -> None:
+    """Fetch sports odds from Odds-API.io (265+ bookmakers)."""
+    try:
+        from ingestion.odds_api_io import OddsApiIoClient
+
+        client = OddsApiIoClient()
+        results = await client.fetch()
+        logger.info(f"fetch_odds_api_io: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_odds_api_io: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_odds_api_io failed: {exc}", exc_info=True)
+
+
+async def fetch_opinion() -> None:
+    """Fetch prediction market data from Opinion (3rd largest PM)."""
+    try:
+        from ingestion.opinion import OpinionClient
+
+        client = OpinionClient()
+        results = await client.fetch()
+        logger.info(f"fetch_opinion: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_opinion: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_opinion failed: {exc}", exc_info=True)
+
+
+async def fetch_polyrouter() -> None:
+    """Fetch unified data from PolyRouter (7 platforms)."""
+    try:
+        from ingestion.polyrouter import PolyRouterClient
+
+        client = PolyRouterClient()
+        results = await client.fetch()
+        logger.info(f"fetch_polyrouter: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_polyrouter: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_polyrouter failed: {exc}", exc_info=True)
+
+
+async def fetch_betfair() -> None:
+    """Fetch exchange odds from Betfair (world's largest exchange)."""
+    try:
+        from ingestion.betfair import BetfairClient
+
+        client = BetfairClient()
+        results = await client.fetch()
+        logger.info(f"fetch_betfair: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_betfair: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_betfair failed: {exc}", exc_info=True)
+
+
+async def fetch_matchbook() -> None:
+    """Fetch exchange odds from Matchbook."""
+    try:
+        from ingestion.matchbook import MatchbookClient
+
+        client = MatchbookClient()
+        results = await client.fetch()
+        logger.info(f"fetch_matchbook: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_matchbook: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_matchbook failed: {exc}", exc_info=True)
+
+
+async def fetch_cloudbet() -> None:
+    """Fetch odds from Cloudbet crypto sportsbook."""
+    try:
+        from ingestion.cloudbet import CloudbetClient
+
+        client = CloudbetClient()
+        results = await client.fetch()
+        logger.info(f"fetch_cloudbet: ingested {len(results)} prices")
+    except ImportError:
+        logger.warning("fetch_cloudbet: not available — skipping")
+    except Exception as exc:
+        logger.error(f"fetch_cloudbet failed: {exc}", exc_info=True)
+
+
 async def fetch_weather() -> None:
     """Fetch latest weather data from Open-Meteo / NWS."""
     try:
@@ -276,11 +360,6 @@ async def run_arb() -> None:
     Load active MarketPrices, run the arb detection engine, persist
     any new ArbOpportunity rows, send alerts, and broadcast via WS.
     """
-    # Skip if no category selected
-    from constants import ACTIVE_CATEGORY
-    if ACTIVE_CATEGORY is None:
-        return
-
     db = SessionLocal()
     try:
         # 0. Deactivate ALL existing active arbs before inserting fresh ones
@@ -917,16 +996,78 @@ def start_scheduler() -> None:
         max_instances=1,
         next_run_time=_now + timedelta(seconds=60),
     )
+    # --- New data sources (Phase 2) ---
+    _scheduler.add_job(
+        fetch_odds_api_io,
+        "interval",
+        seconds=300,
+        id="fetch_odds_api_io",
+        name="Odds-API.io (265+ bookmakers)",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=110),
+    )
+    _scheduler.add_job(
+        fetch_opinion,
+        "interval",
+        seconds=180,
+        id="fetch_opinion",
+        name="Opinion prediction market",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=140),
+    )
+    _scheduler.add_job(
+        fetch_polyrouter,
+        "interval",
+        seconds=180,
+        id="fetch_polyrouter",
+        name="PolyRouter (7 platforms)",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=155),
+    )
+    _scheduler.add_job(
+        fetch_betfair,
+        "interval",
+        seconds=300,
+        id="fetch_betfair",
+        name="Betfair Exchange",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=180),
+    )
+    _scheduler.add_job(
+        fetch_matchbook,
+        "interval",
+        seconds=300,
+        id="fetch_matchbook",
+        name="Matchbook Exchange",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=210),
+    )
+    _scheduler.add_job(
+        fetch_cloudbet,
+        "interval",
+        seconds=300,
+        id="fetch_cloudbet",
+        name="Cloudbet sportsbook",
+        replace_existing=True,
+        max_instances=1,
+        next_run_time=_now + timedelta(seconds=240),
+    )
+
     # --- Detection job (run after first data arrives) ---
     _scheduler.add_job(
         run_arb,
         "interval",
-        seconds=120,
+        seconds=60,
         id="run_arb",
         name="Arb detection",
         replace_existing=True,
         max_instances=1,
-        next_run_time=_now + timedelta(seconds=200),
+        next_run_time=_now + timedelta(seconds=260),
     )
 
     # --- DB cleanup (critical for memory on 512 MB) ---

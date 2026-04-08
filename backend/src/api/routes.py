@@ -18,7 +18,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, Request
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, Request, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy import func
 
 import constants
@@ -54,15 +55,15 @@ async def register(body: dict):
     password = body.get("password", "")
 
     if not email or "@" not in email:
-        return {"error": "Valid email required"}, 400
+        return JSONResponse(status_code=400, content={"error": "Valid email required"})
     if len(password) < 6:
-        return {"error": "Password must be at least 6 characters"}, 400
+        return JSONResponse(status_code=400, content={"error": "Password must be at least 6 characters"})
 
     db = SessionLocal()
     try:
         existing = db.query(User).filter(User.email == email).first()
         if existing:
-            return {"error": "Email already registered"}
+            return JSONResponse(status_code=409, content={"error": "Email already registered"})
 
         user = User(
             email=email,
@@ -79,6 +80,7 @@ async def register(body: dict):
             "user": {
                 "id": user.id,
                 "email": user.email,
+                "role": user.role or "user",
                 "subscription_tier": user.subscription_tier,
                 "subscription_expires_at": None,
             },
@@ -97,7 +99,7 @@ async def login(body: dict):
     try:
         user = db.query(User).filter(User.email == email).first()
         if not user or not verify_password(password, user.password_hash):
-            return {"error": "Invalid email or password"}
+            return JSONResponse(status_code=401, content={"error": "Invalid email or password"})
 
         # Default None fields from pre-migration rows
         role = user.role or "user"
@@ -268,7 +270,7 @@ async def admin_stats(request: Request):
             },
             "platforms": platforms,
             "recent_users": users_list,
-            "active_category": constants.ACTIVE_CATEGORY,
+            "active_category": constants.DISPLAY_CATEGORY,
         }
     finally:
         db.close()
@@ -717,45 +719,32 @@ async def get_categories():
             {"key": k, **v}
             for k, v in constants.CATEGORY_DISPLAY.items()
         ],
-        "active_category": constants.ACTIVE_CATEGORY,
+        "active_category": constants.DISPLAY_CATEGORY,
     }
 
 
 @router.get("/category")
 async def get_category():
-    """Return the currently active category."""
-    return {"active_category": constants.ACTIVE_CATEGORY}
+    """Return the currently active display category."""
+    return {"active_category": constants.DISPLAY_CATEGORY}
 
 
 @router.post("/category")
 async def set_category(body: dict):
-    """Set the active category. Pass {"category": "politics"} or {"category": null} to clear."""
-    import asyncio
+    """Set the display filter category. Data fetching runs for ALL categories regardless.
+    Pass {"category": "politics"} to filter display, or {"category": null} to show all."""
 
     category = body.get("category")
     if category and category not in constants.CATEGORIES:
         return {"error": f"Invalid category. Valid: {constants.CATEGORIES}"}
 
-    # 1. Set the active category
-    constants.ACTIVE_CATEGORY = category
+    # 1. Set the display filter (NOT a data gate — backend fetches everything)
+    constants.DISPLAY_CATEGORY = category
 
-    # 2. Deactivate all existing prices and arbs (clean slate for new category)
-    db = SessionLocal()
-    try:
-        db.query(MarketPrice).filter(MarketPrice.is_active == True).update({"is_active": False})  # noqa: E712
-        db.query(ArbOpportunity).filter(ArbOpportunity.is_active == True).update({"is_active": False})  # noqa: E712
-        db.commit()
-    finally:
-        db.close()
-
-    # 3. Clear the snapshot cache
+    # 2. Clear the snapshot cache so next request reflects the new filter
     global _snapshot_cache, _snapshot_ts
     _snapshot_cache = {}
     _snapshot_ts = 0
-
-    # 4. Trigger immediate fetch cycle in the background
-    if category:
-        asyncio.create_task(_trigger_fetch_cycle())
 
     return {"active_category": category, "status": "ok"}
 
@@ -886,11 +875,16 @@ async def debug_prices():
 
 
 @router.get("/opportunities")
-async def get_opportunities(request: Request, limit: int = Query(50, ge=1, le=200)):
+async def get_opportunities(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    category: str | None = Query(None),
+):
     """
     Return active arbitrage opportunities and discrepancies.
     Free users get limited data (first 2 arbs, no discrepancies).
     Premium users get everything.
+    Optional ?category= param filters by category (defaults to DISPLAY_CATEGORY).
     """
     # Check auth — allow unauthenticated with limited data
     user_data = get_optional_user(request)
@@ -910,26 +904,23 @@ async def get_opportunities(request: Request, limit: int = Query(50, ge=1, le=20
         finally:
             db_check.close()
 
+    # Use explicit ?category= param, fall back to server-side display filter
+    filter_category = category or constants.DISPLAY_CATEGORY
+
     db = SessionLocal()
     try:
-        arbs = (
-            db.query(ArbOpportunity)
-            .filter(ArbOpportunity.is_active == True)  # noqa: E712
-            .order_by(ArbOpportunity.profit_pct.desc())
-            .limit(limit)
-            .all()
-        )
+        query = db.query(ArbOpportunity).filter(ArbOpportunity.is_active == True)  # noqa: E712
+        if filter_category:
+            query = query.filter(ArbOpportunity.category == filter_category)
+        arbs = query.order_by(ArbOpportunity.profit_pct.desc()).limit(limit).all()
 
         all_arbs = [_row_to_dict(a) for a in arbs]
 
         if is_premium:
-            discs = (
-                db.query(Discrepancy)
-                .filter(Discrepancy.is_active == True)  # noqa: E712
-                .order_by(Discrepancy.edge_pct.desc())
-                .limit(limit)
-                .all()
-            )
+            disc_q = db.query(Discrepancy).filter(Discrepancy.is_active == True)  # noqa: E712
+            if filter_category:
+                disc_q = disc_q.filter(Discrepancy.category == filter_category)
+            discs = disc_q.order_by(Discrepancy.edge_pct.desc()).limit(limit).all()
             return {
                 "arb": all_arbs,
                 "discrepancies": [_row_to_dict(d) for d in discs],
@@ -1086,8 +1077,25 @@ async def get_stats():
         )
         discrepancy_details = [_row_to_dict(d) for d in disc_rows]
 
+        # Count active price feeds (total active MarketPrice rows)
+        active_prices = (
+            db.query(func.count(MarketPrice.id))
+            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .scalar()
+            or 0
+        )
+
+        # Count unique sources from active prices (bookmakers + platforms)
+        source_count = (
+            db.query(func.count(func.distinct(MarketPrice.source)))
+            .filter(MarketPrice.is_active == True)  # noqa: E712
+            .scalar()
+            or 0
+        )
+
         return {
             "total_markets": total_markets,
+            "active_prices": active_prices,
             "active_arbs": active_arbs,
             "active_discrepancies": active_discrepancies,
             "alerts_today": alerts_today,
@@ -1095,6 +1103,7 @@ async def get_stats():
             "unmapped_markets": unmapped_markets,
             "platforms": platforms,
             "platform_count": len(platforms),
+            "source_count": source_count,
             "discrepancy_details": discrepancy_details,
         }
     finally:

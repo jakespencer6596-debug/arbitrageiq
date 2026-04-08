@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { api, createWebSocket, setToken, getToken } from './api'
 import Dashboard from './components/Dashboard'
 import StakeCalculator from './components/StakeCalculator'
-import CategorySelector from './components/CategorySelector'
+import CategoryFilter from './components/CategoryFilter'
 import LoginPage from './components/LoginPage'
 import LandingPage from './components/LandingPage'
 import PricingPage from './components/PricingPage'
@@ -99,9 +99,8 @@ export default function App() {
     return () => { if (wsRef.current) wsRef.current.close() }
   }, [handleWsMessage, user])
 
-  // Polling
+  // Polling — always runs (no category gate)
   const fetchAll = useCallback(async () => {
-    if (!activeCategory) return
     try {
       const [opps, statsData, healthData] = await Promise.allSettled([
         api.getOpportunities(),
@@ -126,26 +125,28 @@ export default function App() {
     } catch {
       setApiConnected(false)
     }
-  }, [activeCategory])
+  }, [])
 
   useEffect(() => {
-    if (!activeCategory) return
+    if (!user) return
     fetchAll()
     pollRef.current = setInterval(fetchAll, 15000)
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [activeCategory, fetchAll])
+  }, [user, fetchAll])
 
-  // Category selection
+  // Category filter — just changes the display filter, backend always fetches everything
   const handleSelectCategory = async (category) => {
     setCategoryLoading(true)
-    setOpportunities([])
-    setStats(null)
-    setHealth(null)
     try {
       await api.setCategory(category)
       setActiveCategory(category)
-      setApiConnected(true)
-      addFeedEvent({ type: 'system', message: `Scanning ${category} markets...` })
+      // Immediately refetch with new filter
+      await fetchAll()
+      if (category) {
+        addFeedEvent({ type: 'system', message: `Filtering to ${category} markets` })
+      } else {
+        addFeedEvent({ type: 'system', message: 'Showing all categories' })
+      }
     } catch (err) {
       addFeedEvent({ type: 'system', message: `Failed: ${err.message}` })
     } finally {
@@ -154,12 +155,7 @@ export default function App() {
   }
 
   const handleChangeCategory = async () => {
-    try { await api.setCategory(null) } catch {}
-    setActiveCategory(null)
-    setOpportunities([])
-    setDiscrepancies([])
-    setStats(null)
-    if (pollRef.current) clearInterval(pollRef.current)
+    await handleSelectCategory(null)
   }
 
   const handleSelectPlan = (planKey) => {
@@ -193,16 +189,13 @@ export default function App() {
     )
   }
 
-  // Category selector
-  if (!activeCategory) {
-    return <CategorySelector onSelectCategory={handleSelectCategory} />
-  }
-
+  // Dashboard loads immediately — no category gate
   return (
     <>
       <Dashboard
         activeCategory={activeCategory}
         onChangeCategory={handleChangeCategory}
+        onSelectCategory={handleSelectCategory}
         opportunities={opportunities}
         discrepancies={discrepancies}
         markets={markets}

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Track which sport batch we're on for rotation
 _current_batch_index = 0
-_BATCH_SIZE = 3  # Reduced to conserve free-tier credits (500/month)
+_BATCH_SIZE = 5  # Increased for broader coverage
 
 
 def _classify_sport(sport_key: str) -> str:
@@ -149,11 +149,6 @@ class OddsAPIClient:
 
         if not self.api_key:
             logger.warning("No ODDS_API_KEY configured -- skipping odds fetch")
-            return []
-
-        # Only fetch if active category is sports (saves API credits)
-        if constants.ACTIVE_CATEGORY != "sports":
-            logger.info(f"Odds API: active category is '{constants.ACTIVE_CATEGORY}' — skipping (sports only)")
             return []
 
         results: list[dict] = []
@@ -301,32 +296,45 @@ class OddsAPIClient:
         try:
             db = SessionLocal()
             try:
-                # Deactivate all previous odds_api-sourced bookmaker prices
-                bookmaker_sources = set(r["source"] for r in results)
-                for src in bookmaker_sources:
-                    db.query(MarketPrice).filter(
-                        MarketPrice.source == src,
-                        MarketPrice.is_active == True,  # noqa: E712
-                    ).update({"is_active": False})
-
                 for r in results:
-                    db.add(
-                        MarketPrice(
-                            source=r["source"],
-                            market_id=r["market_id"],
-                            event_name=r["event_name"],
-                            market_title=r["event_name"],
-                            outcome=r["outcome"],
-                            implied_probability=r["implied_probability"],
-                            category=r["category"],
-                            yes_price=r["implied_probability"],
-                            no_price=1.0 - r["implied_probability"],
-                            raw_odds=r["raw_odds"],
-                            last_traded_price=r["raw_odds"],
-                            raw_payload=None,
-                            fetched_at=r["timestamp"],
+                    # Upsert: update existing or insert new
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == r["source"],
+                            MarketPrice.market_id == r["market_id"],
+                            MarketPrice.outcome == r["outcome"],
                         )
+                        .first()
                     )
+                    if existing:
+                        existing.implied_probability = r["implied_probability"]
+                        existing.yes_price = r["implied_probability"]
+                        existing.no_price = 1.0 - r["implied_probability"]
+                        existing.raw_odds = r["raw_odds"]
+                        existing.last_traded_price = r["raw_odds"]
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = r["event_name"]
+                    else:
+                        db.add(
+                            MarketPrice(
+                                source=r["source"],
+                                market_id=r["market_id"],
+                                event_name=r["event_name"],
+                                market_title=r["event_name"],
+                                outcome=r["outcome"],
+                                implied_probability=r["implied_probability"],
+                                category=r["category"],
+                                yes_price=r["implied_probability"],
+                                no_price=1.0 - r["implied_probability"],
+                                raw_odds=r["raw_odds"],
+                                last_traded_price=r["raw_odds"],
+                                raw_payload=None,
+                                fetched_at=r["timestamp"],
+                            )
+                        )
                 db.commit()
                 logger.info(f"Saved {len(results)} odds prices to database")
             finally:

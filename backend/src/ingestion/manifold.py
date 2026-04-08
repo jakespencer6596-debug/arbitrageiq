@@ -23,7 +23,7 @@ from ingestion.categorize import categorise
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
-_MAX_PAGES = 3  # Cap pagination to 300 markets to avoid OOM on free tier
+_MAX_PAGES = 6  # Increased for broader coverage
 
 
 class ManifoldClient:
@@ -123,11 +123,6 @@ class ManifoldClient:
         Paginate through open Manifold Markets, filter by active category
         and quality thresholds, and return normalised rows.
         """
-        # Skip if no category selected
-        if constants.ACTIVE_CATEGORY is None:
-            logger.info("Manifold: no active category — skipping")
-            return []
-
         results: list[dict] = []
         offset = 0
         page_count = 0
@@ -224,9 +219,7 @@ class ManifoldClient:
             self._update_system_status(error=str(exc))
             return results
 
-        # Filter to active category only
-        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
-        logger.info(f"Manifold: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+        logger.info(f"Manifold: {len(results)} rows across all categories")
 
         if not results:
             self._update_system_status()
@@ -238,35 +231,50 @@ class ManifoldClient:
         try:
             db = SessionLocal()
             try:
-                # Deactivate old Manifold prices before inserting fresh ones
-                db.query(MarketPrice).filter(
-                    MarketPrice.source == "manifold",
-                    MarketPrice.is_active == True,  # noqa: E712
-                ).update({"is_active": False})
-
                 seen_markets: set[str] = set()
 
                 for r in results:
-                    db.add(
-                        MarketPrice(
-                            source="manifold",
-                            market_id=r["market_id"],
-                            event_name=r["title"],
-                            market_title=r["title"],
-                            outcome=r["outcome"],
-                            implied_probability=r["yes_price"],
-                            category=r["category"],
-                            yes_price=r["yes_price"],
-                            no_price=r["no_price"],
-                            last_traded_price=r["price"],
-                            volume=r.get("volume"),
-                            raw_payload=None,
-                            fetched_at=r["timestamp"],
-                            metadata_={"url": r["url"]} if r.get("url") else {},
+                    # Upsert
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == "manifold",
+                            MarketPrice.market_id == r["market_id"],
+                            MarketPrice.outcome == r["outcome"],
                         )
+                        .first()
                     )
+                    if existing:
+                        existing.implied_probability = r["yes_price"]
+                        existing.yes_price = r["yes_price"]
+                        existing.no_price = r["no_price"]
+                        existing.last_traded_price = r["price"]
+                        existing.volume = r.get("volume")
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = r["title"]
+                        existing.category = r["category"]
+                    else:
+                        db.add(
+                            MarketPrice(
+                                source="manifold",
+                                market_id=r["market_id"],
+                                event_name=r["title"],
+                                market_title=r["title"],
+                                outcome=r["outcome"],
+                                implied_probability=r["yes_price"],
+                                category=r["category"],
+                                yes_price=r["yes_price"],
+                                no_price=r["no_price"],
+                                last_traded_price=r["price"],
+                                volume=r.get("volume"),
+                                raw_payload=None,
+                                fetched_at=r["timestamp"],
+                                metadata_={"url": r["url"]} if r.get("url") else {},
+                            )
+                        )
 
-                    # Auto-discover -- only upsert once per market
                     mid = r["market_id"]
                     if mid not in seen_markets:
                         seen_markets.add(mid)

@@ -16,7 +16,7 @@ import httpx
 import logging
 from datetime import datetime, timezone
 
-from constants import POLYMARKET_API_URL, ACTIVE_CATEGORY
+from constants import POLYMARKET_API_URL
 import constants
 from db.models import SessionLocal, MarketPrice, TrackedMarket, SystemStatus
 from ingestion.categorize import categorise
@@ -24,7 +24,7 @@ from ingestion.categorize import categorise
 logger = logging.getLogger(__name__)
 
 _PAGE_LIMIT = 100
-_MAX_PAGES = 3  # Cap pagination to avoid OOM on free tier
+_MAX_PAGES = 8  # Increased for broader coverage
 
 
 def _parse_json_string(value) -> list:
@@ -150,11 +150,6 @@ class PolymarketClient:
         Paginate through open Polymarket markets, filter by active category,
         and return normalised rows.
         """
-        # Skip if no category selected
-        if constants.ACTIVE_CATEGORY is None:
-            logger.info("Polymarket: no active category — skipping")
-            return []
-
         results: list[dict] = []
         offset = 0
         page_count = 0
@@ -284,9 +279,7 @@ class PolymarketClient:
         except Exception as exc:
             logger.debug(f"Polymarket CLOB enrichment failed (non-fatal): {exc}")
 
-        # Filter to active category only
-        results = [r for r in results if r["category"] == constants.ACTIVE_CATEGORY]
-        logger.info(f"Polymarket: {len(results)} rows match active category '{constants.ACTIVE_CATEGORY}'")
+        logger.info(f"Polymarket: {len(results)} rows across all categories")
 
         if not results:
             self._update_system_status()
@@ -298,36 +291,53 @@ class PolymarketClient:
         try:
             db = SessionLocal()
             try:
-                # Deactivate old Polymarket prices before inserting fresh ones
-                db.query(MarketPrice).filter(
-                    MarketPrice.source == "polymarket",
-                    MarketPrice.is_active == True,  # noqa: E712
-                ).update({"is_active": False})
-
                 seen_markets: set[str] = set()
 
                 for r in results:
-                    db.add(
-                        MarketPrice(
-                            source="polymarket",
-                            market_id=r["market_id"],
-                            event_name=r["title"],
-                            market_title=r["title"],
-                            outcome=r["outcome"],
-                            implied_probability=r.get("yes_price", r["price"]),
-                            category=r["category"],
-                            yes_price=r.get("yes_price"),
-                            no_price=r.get("no_price"),
-                            last_traded_price=r["price"],
-                            volume=r.get("volume"),
-                            raw_payload=r.get("raw"),
-                            fetched_at=r["timestamp"],
-                            metadata_={
-                                "slug": r.get("slug", ""),
-                                "end_date": r.get("end_date", ""),
-                            },
+                    # Upsert: update existing row or insert new one
+                    existing = (
+                        db.query(MarketPrice)
+                        .filter(
+                            MarketPrice.source == "polymarket",
+                            MarketPrice.market_id == r["market_id"],
+                            MarketPrice.outcome == r["outcome"],
                         )
+                        .first()
                     )
+                    if existing:
+                        existing.implied_probability = r.get("yes_price", r["price"])
+                        existing.yes_price = r.get("yes_price")
+                        existing.no_price = r.get("no_price")
+                        existing.last_traded_price = r["price"]
+                        existing.volume = r.get("volume")
+                        existing.fetched_at = r["timestamp"]
+                        existing.timestamp = r["timestamp"]
+                        existing.is_active = True
+                        existing.event_name = r["title"]
+                        existing.category = r["category"]
+                        existing.metadata_ = {"slug": r.get("slug", ""), "end_date": r.get("end_date", "")}
+                    else:
+                        db.add(
+                            MarketPrice(
+                                source="polymarket",
+                                market_id=r["market_id"],
+                                event_name=r["title"],
+                                market_title=r["title"],
+                                outcome=r["outcome"],
+                                implied_probability=r.get("yes_price", r["price"]),
+                                category=r["category"],
+                                yes_price=r.get("yes_price"),
+                                no_price=r.get("no_price"),
+                                last_traded_price=r["price"],
+                                volume=r.get("volume"),
+                                raw_payload=r.get("raw"),
+                                fetched_at=r["timestamp"],
+                                metadata_={
+                                    "slug": r.get("slug", ""),
+                                    "end_date": r.get("end_date", ""),
+                                },
+                            )
+                        )
 
                     # Auto-discover -- only upsert once per market
                     mid = r["market_id"]
