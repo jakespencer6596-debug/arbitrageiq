@@ -2,18 +2,62 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ArbitrageIQ</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0f0d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>ArbitrageIQ — Cross-Platform Prediction Market Arbitrage</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         darkMode: 'class',
         theme: {
           extend: {
+            fontFamily: {
+              sans: ['DM Sans', 'system-ui', 'sans-serif'],
+              mono: ['JetBrains Mono', 'Menlo', 'monospace'],
+            },
+            colors: {
+              surface: {
+                0: '#0a0f0d',
+                1: '#0f1512',
+                2: '#141c18',
+                3: '#1a2420',
+                4: '#202e28',
+              },
+              mint: {
+                50: '#eefbf4',
+                100: '#d5f5e3',
+                200: '#afeacb',
+                300: '#7bdaad',
+                400: '#43c68a',
+                500: '#10b981',
+                600: '#059669',
+                700: '#047857',
+                800: '#065f46',
+                900: '#064e3b',
+              },
+              edge: {
+                green: '#10b981',
+                amber: '#f59e0b',
+                rose: '#f43f5e',
+              }
+            },
             keyframes: {
-              'pulse-green': {
-                '0%, 100%': { boxShadow: '0 0 0 0 rgba(34,197,94,0.4)' },
-                '50%': { boxShadow: '0 0 0 8px rgba(34,197,94,0)' },
+              'scan': {
+                '0%': { transform: 'translateX(-100%)' },
+                '100%': { transform: 'translateX(200%)' },
+              },
+              'pulse-mint': {
+                '0%, 100%': { boxShadow: '0 0 0 0 rgba(16,185,129,0.4)' },
+                '50%': { boxShadow: '0 0 0 6px rgba(16,185,129,0)' },
+              },
+              'slide-up': {
+                '0%': { transform: 'translateY(12px)', opacity: '0' },
+                '100%': { transform: 'translateY(0)', opacity: '1' },
               },
               'slide-in-right': {
                 '0%': { transform: 'translateX(100%)', opacity: '0' },
@@ -24,41 +68,103 @@
                 '100%': { opacity: '1', transform: 'translateY(0)' },
               },
               'row-highlight': {
-                '0%': { backgroundColor: 'rgba(34,197,94,0.15)' },
+                '0%': { backgroundColor: 'rgba(16,185,129,0.12)' },
                 '100%': { backgroundColor: 'transparent' },
+              },
+              'glow-pulse': {
+                '0%, 100%': { opacity: '0.4' },
+                '50%': { opacity: '0.8' },
               },
             },
             animation: {
-              'pulse-green': 'pulse-green 2s ease-in-out infinite',
+              'scan': 'scan 3s ease-in-out infinite',
+              'pulse-mint': 'pulse-mint 2s ease-in-out infinite',
+              'slide-up': 'slide-up 0.4s ease-out',
               'slide-in-right': 'slide-in-right 0.3s ease-out',
               'fade-in': 'fade-in 0.3s ease-out',
-              'row-highlight': 'row-highlight 3s ease-out',
+              'row-highlight': 'row-highlight 2.5s ease-out',
+              'glow-pulse': 'glow-pulse 3s ease-in-out infinite',
             },
           },
         },
       }
     </script>
     <style>
-      * { scrollbar-width: thin; scrollbar-color: #374151 #111827; }
-      *::-webkit-scrollbar { width: 6px; height: 6px; }
-      *::-webkit-scrollbar-track { background: #111827; }
-      *::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
-      *::-webkit-scrollbar-thumb:hover { background: #4b5563; }
-      @keyframes shimmer {
-        0% { background-position: -200% 0; }
-        100% { background-position: 200% 0; }
+      /* Custom scrollbar — near-invisible, doesn't break dark theme */
+      * { scrollbar-width: thin; scrollbar-color: #1a2420 transparent; }
+      *::-webkit-scrollbar { width: 5px; height: 5px; }
+      *::-webkit-scrollbar-track { background: transparent; }
+      *::-webkit-scrollbar-thumb { background: #1a2420; border-radius: 10px; }
+      *::-webkit-scrollbar-thumb:hover { background: #202e28; }
+
+      /* Noise texture overlay for depth */
+      .noise::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        opacity: 0.015;
+        pointer-events: none;
+        z-index: 9999;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
       }
+
+      /* Scan line effect for hero stats */
+      .scan-line {
+        position: relative;
+        overflow: hidden;
+      }
+      .scan-line::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 40%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(16,185,129,0.06), transparent);
+        animation: scan 4s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      /* Shimmer for loading states */
       .shimmer {
-        background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.03) 50%, transparent 75%);
+        background: linear-gradient(90deg, transparent 25%, rgba(16,185,129,0.03) 50%, transparent 75%);
         background-size: 200% 100%;
-        animation: shimmer 3s infinite;
+        animation: scan 2.5s infinite;
       }
-      /* Recharts tooltip overrides */
+
+      /* Glass panel effect */
+      .glass {
+        background: rgba(15, 21, 18, 0.7);
+        backdrop-filter: blur(16px) saturate(120%);
+        -webkit-backdrop-filter: blur(16px) saturate(120%);
+      }
+
+      /* Subtle inner border glow for cards */
+      .card-glow {
+        box-shadow: inset 0 1px 0 rgba(16,185,129,0.05), 0 2px 8px rgba(0,0,0,0.3);
+      }
+
+      /* Data cell — monospaced, right-aligned */
+      .data-cell {
+        font-family: 'JetBrains Mono', monospace;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: -0.02em;
+      }
+
+      /* Recharts overrides */
       .recharts-tooltip-wrapper { outline: none; }
-      .recharts-default-tooltip { background: #111827 !important; border: 1px solid #374151 !important; border-radius: 8px !important; }
+
+      /* Safe area padding for notched phones */
+      @supports(padding: max(0px)) {
+        .safe-bottom { padding-bottom: max(1.5rem, env(safe-area-inset-bottom)); }
+        .safe-top { padding-top: max(0px, env(safe-area-inset-top)); }
+      }
+
+      /* Selection color */
+      ::selection { background: rgba(16,185,129,0.25); }
     </style>
   </head>
-  <body class="bg-gray-950 text-gray-100 min-h-screen antialiased">
+  <body class="bg-surface-0 text-gray-100 min-h-screen antialiased font-sans noise">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
