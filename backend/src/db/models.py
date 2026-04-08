@@ -8,11 +8,10 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Float, DateTime, Boolean, JSON,
-    Integer, Text, create_engine, Index, text
+    Integer, Text, create_engine, Index, text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
-
-from sqlalchemy import UniqueConstraint
 
 # Use PostgreSQL if DATABASE_URL is set (Render), otherwise fall back to SQLite
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -86,7 +85,9 @@ class MarketPrice(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
+        UniqueConstraint("source", "market_id", "outcome", name="uq_price_source_market_outcome"),
         Index("idx_market_source_id", "source", "market_id"),
+        Index("idx_market_active", "is_active"),
         Index("idx_market_category", "category"),
         Index("idx_market_timestamp", "timestamp"),
     )
@@ -108,6 +109,12 @@ class ArbOpportunity(Base):
     is_active = Column(Boolean, default=True)
     opening_line = Column(JSON, nullable=True)
     closing_line = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("idx_arb_active_profit", "is_active", "profit_pct"),
+        Index("idx_arb_category", "category", "is_active"),
+        Index("idx_arb_detected", "detected_at"),
+    )
 
 
 class Discrepancy(Base):
@@ -209,6 +216,42 @@ class ArbHistory(Base):
     status = Column(String, default="active")  # active, expired
     legs_json = Column(JSON, nullable=True)
 
+    __table_args__ = (
+        Index("idx_arb_hist_status", "status", "last_seen_at"),
+        Index("idx_arb_hist_sources", "source_a", "source_b"),
+        Index("idx_arb_hist_event", "event_name"),
+    )
+
+
+class EventMapping(Base):
+    """
+    Persistent cross-platform event linking.
+
+    Maps market prices from different sources to a canonical event.
+    Once two markets are linked (e.g. "Trump wins 2028" on Polymarket
+    and Kalshi), the link persists — no need to re-fuzzy-match every cycle.
+    This dramatically speeds up arb detection and improves accuracy.
+    """
+    __tablename__ = "event_mappings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    canonical_name = Column(String, nullable=False)
+    source = Column(String, nullable=False)
+    source_market_id = Column(String, nullable=False)
+    event_name = Column(String, nullable=False)
+    category = Column(String, default="other")
+    confidence = Column(Float, default=0.0)
+    match_method = Column(String, default="fuzzy")  # exact_id, fuzzy, bigram, manual
+    linked_at = Column(DateTime, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+    __table_args__ = (
+        UniqueConstraint("source", "source_market_id", name="uq_event_source_market"),
+        Index("idx_event_canonical", "canonical_name", "is_active"),
+        Index("idx_event_source", "source", "is_active"),
+    )
+
 
 class BetLog(Base):
     """User bet tracking for P&L."""
@@ -254,8 +297,8 @@ def _run_migrations():
         ("users", "discord_webhook_url", "VARCHAR"),
         ("users", "alert_min_profit", "FLOAT DEFAULT 0.02"),
         ("users", "alerts_enabled", "BOOLEAN DEFAULT TRUE"),
-        # ArbHistory table (may not exist)
-        # BetLog table (may not exist)
+        # EventMapping new columns (future-proofing)
+        ("event_mappings", "match_method", "VARCHAR DEFAULT 'fuzzy'"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:

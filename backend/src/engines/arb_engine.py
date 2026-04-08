@@ -240,12 +240,30 @@ def _fuzzy_similarity(name_a: str, name_b: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Configurable thresholds
+# Configurable thresholds — loosened in Phase 3 for 3-5x more matches
 # ---------------------------------------------------------------------------
-SIMILARITY_THRESHOLD = 0.55    # Jaccard minimum (coarse filter)
-FUZZY_THRESHOLD = 60           # rapidfuzz token_sort_ratio minimum (0-100 scale)
-MIN_SHARED_TOKENS = 3          # Must share at least 3 meaningful tokens
+SIMILARITY_THRESHOLD = 0.40    # Jaccard minimum (coarse filter) — was 0.55
+FUZZY_THRESHOLD = 50           # rapidfuzz token_sort_ratio minimum — was 60
+MIN_SHARED_TOKENS = 2          # Must share at least 2 meaningful tokens — was 3
 MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
+
+
+def _bigram_similarity(name_a: str, name_b: str) -> float:
+    """
+    Character bigram similarity — catches partial word matches that
+    token-based methods miss (e.g., "Trump" vs "Trumps", "Biden" vs "Bidens").
+    Returns 0.0-1.0.
+    """
+    def _bigrams(s: str) -> set[str]:
+        s = s.lower().strip()
+        return {s[i:i+2] for i in range(len(s) - 1)} if len(s) >= 2 else set()
+    bg_a = _bigrams(name_a)
+    bg_b = _bigrams(name_b)
+    if not bg_a or not bg_b:
+        return 0.0
+    intersection = bg_a & bg_b
+    union = bg_a | bg_b
+    return len(intersection) / len(union)
 
 
 def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOpportunityResult]:
@@ -373,14 +391,19 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if len(shared) < MIN_SHARED_TOKENS:
             continue
 
-        # Two-phase matching: coarse Jaccard + fine rapidfuzz
+        # Three-phase matching: coarse Jaccard + bigram + fine rapidfuzz
         jaccard = _similarity(a["tokens"], b["tokens"])
         if jaccard < SIMILARITY_THRESHOLD:
             continue
 
+        # Bigram similarity for partial word matching
+        bigram = _bigram_similarity(a["normalized_name"], b["normalized_name"])
+
         # Fine matching with rapidfuzz (handles word reordering, partial matches)
         fuzzy = _fuzzy_similarity(a["normalized_name"], b["normalized_name"])
-        if fuzzy < FUZZY_THRESHOLD / 100.0:
+
+        # Combined score: pass if fuzzy OR (jaccard + bigram are both strong)
+        if fuzzy < FUZZY_THRESHOLD / 100.0 and not (jaccard >= 0.50 and bigram >= 0.50):
             continue
 
         # Entity guard: if both markets have entities, they must share at least one
@@ -515,13 +538,35 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
             except Exception:
                 pass
 
-        # Confidence score based on matching quality + volume + freshness
+        # Enhanced confidence scoring — weighted across 4 dimensions
         min_vol = min(cheap.get("volume", 0), expensive.get("volume", 0))
-        confidence = "low"
-        if fuzzy >= 0.85 and min_vol >= 10000 and freshness < 120:
+        max_vol = max(cheap.get("volume", 0), expensive.get("volume", 0))
+
+        # Match quality score (0-1): best of fuzzy and combined jaccard+bigram
+        match_score = max(fuzzy, (jaccard + bigram) / 2)
+
+        # Volume score (0-1): log scale, 0 at vol=0, 1 at vol=100K+
+        import math
+        vol_score = min(1.0, math.log10(max(min_vol, 1)) / 5.0)
+
+        # Freshness score (0-1): 1.0 if <60s, decays to 0 at 30min
+        fresh_score = max(0.0, 1.0 - (freshness / 1800.0))
+
+        # Platform reliability — real-money platforms score higher
+        _RELIABLE = {"polymarket", "kalshi", "smarkets", "betfair", "predictit"}
+        both_reliable = cheap["source"] in _RELIABLE and expensive["source"] in _RELIABLE
+        reliability_score = 1.0 if both_reliable else 0.6
+
+        # Weighted confidence: match 40%, volume 25%, freshness 20%, reliability 15%
+        conf_score = (match_score * 0.40 + vol_score * 0.25 +
+                      fresh_score * 0.20 + reliability_score * 0.15)
+
+        if conf_score >= 0.70:
             confidence = "high"
-        elif fuzzy >= 0.70 and min_vol >= 1000:
+        elif conf_score >= 0.45:
             confidence = "medium"
+        else:
+            confidence = "low"
 
         results.append(ArbOpportunityResult(
             event_name=f"{cheap['normalized_name']} vs {expensive['source']}",
@@ -541,6 +586,171 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
     # Sort by NET profit descending, limit to top 50
     results.sort(key=lambda x: x.net_profit_pct, reverse=True)
     return results[:50]
+
+
+# ---------------------------------------------------------------------------
+# Multi-outcome arb detection — 3+ way markets across platforms
+# ---------------------------------------------------------------------------
+
+def detect_multi_outcome_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOpportunityResult]:
+    """
+    Detect arbitrage in N-way markets (3+ outcomes) across platforms.
+
+    Example: "Who will win the 2028 presidential election?"
+    - Polymarket: Trump 45%, DeSantis 20%, Newsom 15%, Field 20%
+    - PredictIt: Trump 50%, DeSantis 18%, Newsom 12%, Field 20%
+
+    If we can buy the cheapest price for each candidate across platforms
+    and the sum of implied probs < 1.0, that's a guaranteed-profit arb.
+
+    Strategy:
+    1. Group by parent market (using market_id prefix or event name)
+    2. For each candidate/outcome, find the cheapest price across all sources
+    3. Check if sum of cheapest implied probs < 1.0
+    """
+    from collections import defaultdict
+
+    # Parse prices with outcome info
+    parsed = []
+    for price in market_prices:
+        if isinstance(price, dict):
+            event_name = price.get("event_name", "")
+            outcome = price.get("outcome", "yes")
+            source = price.get("source", "").lower().strip()
+            prob = price.get("implied_probability", 0)
+            market_url = price.get("market_url", "")
+            volume = price.get("volume", 0) or 0
+            category = price.get("category", "other")
+            market_id = price.get("market_id", "")
+            fetched_at = price.get("fetched_at", "")
+        else:
+            event_name = getattr(price, "event_name", "")
+            outcome = getattr(price, "outcome", "yes")
+            source = getattr(price, "source", "").lower().strip()
+            prob = getattr(price, "implied_probability", 0)
+            market_url = getattr(price, "market_url", "")
+            volume = getattr(price, "volume", 0) or 0
+            category = getattr(price, "category", "other")
+            market_id = getattr(price, "market_id", "")
+            fetched_at = getattr(price, "fetched_at", "") or ""
+
+        if not event_name or not source or not prob or prob <= 0.01 or prob >= 0.99:
+            continue
+        # Skip simple yes/no — we want named outcomes (candidates, teams)
+        outcome_lower = (outcome or "").lower().strip()
+        if outcome_lower in ("yes", "no", ""):
+            continue
+
+        parsed.append({
+            "event_name": _normalize_event_name(event_name),
+            "outcome": outcome_lower,
+            "source": source,
+            "prob": prob,
+            "odds": 1.0 / prob,
+            "market_url": market_url,
+            "volume": volume,
+            "category": category,
+            "market_id": market_id,
+            "fetched_at": fetched_at,
+        })
+
+    if len(parsed) < 3:
+        return []
+
+    # Group by normalized event name (the parent market)
+    event_groups: dict[str, list] = defaultdict(list)
+    for p in parsed:
+        # Use first 80 chars of event name as group key
+        key = p["event_name"][:80].lower()
+        event_groups[key].append(p)
+
+    # For similar event names, merge groups using fuzzy matching
+    keys = list(event_groups.keys())
+    merged = {}
+    used = set()
+    for i, k1 in enumerate(keys):
+        if k1 in used:
+            continue
+        group = list(event_groups[k1])
+        for k2 in keys[i+1:]:
+            if k2 in used:
+                continue
+            sim = _fuzzy_similarity(k1, k2)
+            if sim >= 0.60:
+                group.extend(event_groups[k2])
+                used.add(k2)
+        merged[k1] = group
+        used.add(k1)
+
+    results = []
+
+    for event_key, prices in merged.items():
+        # Need prices from 2+ sources with 3+ distinct outcomes
+        sources = set(p["source"] for p in prices)
+        outcomes = set(p["outcome"] for p in prices)
+        if len(sources) < 2 or len(outcomes) < 3:
+            continue
+
+        # For each outcome, find the cheapest implied probability across sources
+        outcome_best: dict[str, dict] = {}  # outcome -> cheapest price dict
+        for p in prices:
+            oc = p["outcome"]
+            if oc not in outcome_best or p["prob"] < outcome_best[oc]["prob"]:
+                outcome_best[oc] = p
+
+        # Check if sum of cheapest probs < 1.0 (arb condition)
+        cheapest_probs = [v["prob"] for v in outcome_best.values()]
+        arb_sum = sum(cheapest_probs)
+
+        if arb_sum >= 1.0:
+            continue  # No arb
+
+        profit_pct = (1.0 / arb_sum) - 1.0
+        if profit_pct > MAX_PROFIT_PCT or profit_pct < MIN_ARB_PROFIT_PCT:
+            continue
+
+        # Build legs
+        legs = []
+        total_net = 0.0
+        for oc, best in outcome_best.items():
+            stake_pct = (1.0 / best["odds"]) / arb_sum
+            stake = base_stake * stake_pct
+            gross_leg = base_stake * profit_pct * stake_pct
+            net_leg = _compute_net_profit(gross_leg, stake, best["source"])
+            total_net += net_leg
+
+            fee_info = _get_fee_info(best["source"])
+            legs.append(ArbLeg(
+                source=best["source"],
+                outcome=f"BUY {oc} @ {best['prob']:.0%}",
+                decimal_odds=round(best["odds"], 4),
+                implied_prob=round(best["prob"], 4),
+                stake_pct=round(stake_pct, 4),
+                stake_dollars=round(stake, 2),
+                market_url=best["market_url"],
+                volume=best["volume"],
+                fees=fee_info,
+                fetched_at=best.get("fetched_at", ""),
+            ))
+
+        net_profit_pct = total_net / base_stake if base_stake > 0 else 0
+        # Use first price's category and event name
+        sample = list(outcome_best.values())[0]
+
+        results.append(ArbOpportunityResult(
+            event_name=f"[Multi-{len(outcomes)}way] {sample['event_name'][:80]}",
+            category=sample["category"],
+            profit_pct=round(profit_pct, 4),
+            net_profit_pct=round(net_profit_pct, 4),
+            net_profit_on_1000=round(total_net, 2),
+            arb_type="multi_outcome",
+            confidence="medium",
+            legs=legs,
+            profit_on_1000=round(base_stake * profit_pct, 2),
+        ))
+
+    results.sort(key=lambda x: x.net_profit_pct, reverse=True)
+    return results[:20]
 
 
 # ---------------------------------------------------------------------------

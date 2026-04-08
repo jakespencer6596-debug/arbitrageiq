@@ -37,6 +37,7 @@ from db.models import (
     ArbOpportunity,
     ArbHistory,
     Discrepancy,
+    EventMapping,
     MarketPrice,
     SessionLocal,
     TrackedMarket,
@@ -413,16 +414,27 @@ async def run_arb() -> None:
                 "end_date": end_date,
             })
 
-        # Run both cross-platform arb detection AND overround detection
+        # Run cross-platform, multi-outcome, and overround arb detection
         try:
-            from engines.arb_engine import detect_arb, detect_overround
+            from engines.arb_engine import detect_arb, detect_overround, detect_multi_outcome_arb
         except ImportError:
             logger.warning("run_arb: engines.arb_engine not available — skipping")
             return
 
+        # Phase 3: Run event linker to build/update persistent mappings
+        try:
+            from engines.event_linker import link_events
+            linked_groups = link_events(price_dicts, db)
+            logger.info(f"run_arb: event linker found {len(linked_groups)} multi-source events")
+        except ImportError:
+            logger.debug("run_arb: event_linker not available — using direct matching")
+        except Exception as exc:
+            logger.error(f"run_arb: event linker failed: {exc}")
+
         cross_arbs = detect_arb(price_dicts)
+        multi_arbs = detect_multi_outcome_arb(price_dicts)
         overround_arbs = detect_overround(price_dicts)
-        opportunities = cross_arbs + overround_arbs
+        opportunities = cross_arbs + multi_arbs + overround_arbs
 
         # Also detect value bets (mispriced markets vs consensus)
         value_bets = []
@@ -441,7 +453,7 @@ async def run_arb() -> None:
             logger.debug("run_arb: no opportunities detected")
             return
 
-        logger.info(f"run_arb: {len(cross_arbs)} cross-platform + {len(overround_arbs)} overround arbs | {len(value_bets)} discrepancies")
+        logger.info(f"run_arb: {len(cross_arbs)} cross-platform + {len(multi_arbs)} multi-outcome + {len(overround_arbs)} overround arbs | {len(value_bets)} value bets")
 
         # 3. Persist ARBS to ArbOpportunity table (guaranteed profit only)
         saved_count = 0

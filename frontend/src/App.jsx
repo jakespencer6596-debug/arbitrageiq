@@ -8,6 +8,7 @@ import LandingPage from './components/LandingPage'
 import PricingPage from './components/PricingPage'
 import PaywallOverlay from './components/PaywallOverlay'
 import AdminDashboard from './components/AdminDashboard'
+import { useArbAlerts } from './components/ArbAlert'
 
 export default function App() {
   // Auth state
@@ -31,11 +32,27 @@ export default function App() {
   const [apiConnected, setApiConnected] = useState(false)
   const [premiumData, setPremiumData] = useState({ premium: false, blurred_count: 0, total_count: 0 })
 
+  // Sound + alerts
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    const saved = localStorage.getItem('aiq_sound')
+    return saved !== null ? saved === 'true' : true
+  })
+  const { toasts, addToast, dismissToast } = useArbAlerts(soundEnabled)
+
   const wsRef = useRef(null)
   const pollRef = useRef(null)
+  const prevArbCountRef = useRef(0)
 
   const isPremium = user?.subscription_tier && user.subscription_tier !== 'free'
   const isAdmin = user?.role === 'admin' || user?.role === 'employee'
+
+  const handleToggleSound = useCallback(() => {
+    setSoundEnabled(prev => {
+      const next = !prev
+      localStorage.setItem('aiq_sound', String(next))
+      return next
+    })
+  }, [])
 
   // Check auth on mount
   useEffect(() => {
@@ -86,11 +103,28 @@ export default function App() {
       switch (data.type) {
         case 'ws_connected': setWsConnected(true); break
         case 'ws_disconnected': setWsConnected(false); break
-        case 'arb': addFeedEvent({ type: 'arb', message: 'New arb detected' }); break
+        case 'arb': {
+          addFeedEvent({ type: 'arb', message: 'New arb detected' })
+          // Fire toast alert
+          const arbData = data.data || {}
+          const d = typeof arbData.to_dict === 'function' ? arbData.to_dict() : arbData
+          const profit = d.net_profit_pct || d.profit_pct || 0
+          const eventName = d.event_name || 'New opportunity'
+          const legs = d.legs || []
+          const platforms = legs.slice(0, 3).map(l => l.source || '').filter(Boolean)
+
+          addToast({
+            type: profit >= 0.05 ? 'high_value' : 'arb',
+            message: eventName,
+            profit: profit,
+            platforms: platforms,
+          })
+          break
+        }
         default: break
       }
     },
-    [addFeedEvent]
+    [addFeedEvent, addToast]
   )
 
   useEffect(() => {
@@ -99,7 +133,7 @@ export default function App() {
     return () => { if (wsRef.current) wsRef.current.close() }
   }, [handleWsMessage, user])
 
-  // Polling — always runs (no category gate)
+  // Polling
   const fetchAll = useCallback(async () => {
     try {
       const [opps, statsData, healthData] = await Promise.allSettled([
@@ -110,13 +144,34 @@ export default function App() {
       let anySuccess = false
       if (opps.status === 'fulfilled') {
         const data = opps.value || {}
-        setOpportunities(data.arb || [])
+        const newArbs = data.arb || []
+        setOpportunities(newArbs)
         setDiscrepancies(data.discrepancies || [])
         setPremiumData({
           premium: data.premium ?? false,
           blurred_count: data.blurred_count ?? 0,
-          total_count: data.total_count ?? (data.arb || []).length,
+          total_count: data.total_count ?? newArbs.length,
         })
+
+        // Detect new arbs via polling (if WS missed them)
+        if (newArbs.length > prevArbCountRef.current && prevArbCountRef.current > 0) {
+          const diff = newArbs.length - prevArbCountRef.current
+          if (diff > 0 && diff <= 10) {
+            // Alert for the highest-profit new arb
+            const topNew = newArbs[0]
+            if (topNew) {
+              const legs = topNew.legs?.legs || topNew.legs || []
+              addToast({
+                type: (topNew.profit_pct || 0) >= 0.05 ? 'high_value' : 'arb',
+                message: topNew.event_name || 'New opportunity',
+                profit: topNew.profit_pct || 0,
+                platforms: (Array.isArray(legs) ? legs : []).slice(0, 3).map(l => l?.source || '').filter(Boolean),
+              })
+            }
+          }
+        }
+        prevArbCountRef.current = newArbs.length
+
         anySuccess = true
       }
       if (statsData.status === 'fulfilled') { setStats(statsData.value); anySuccess = true }
@@ -125,7 +180,7 @@ export default function App() {
     } catch {
       setApiConnected(false)
     }
-  }, [])
+  }, [addToast])
 
   useEffect(() => {
     if (!user) return
@@ -134,13 +189,12 @@ export default function App() {
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [user, fetchAll])
 
-  // Category filter — just changes the display filter, backend always fetches everything
+  // Category filter
   const handleSelectCategory = async (category) => {
     setCategoryLoading(true)
     try {
       await api.setCategory(category)
       setActiveCategory(category)
-      // Immediately refetch with new filter
       await fetchAll()
       if (category) {
         addFeedEvent({ type: 'system', message: `Filtering to ${category} markets` })
@@ -159,7 +213,6 @@ export default function App() {
   }
 
   const handleSelectPlan = (planKey) => {
-    // Stripe integration will go here
     alert(`Stripe payment for ${planKey} plan will be connected soon. Contact support for early access.`)
     setShowPricing(false)
   }
@@ -169,17 +222,19 @@ export default function App() {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
         <div className="text-center">
-          <svg className="animate-spin h-8 w-8 text-green-500 mx-auto mb-3" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <p className="text-gray-500 text-sm">Loading...</p>
+          <div className="relative inline-block">
+            <svg className="animate-spin h-8 w-8 text-green-500" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+          <p className="text-gray-500 text-xs mt-3">Loading...</p>
         </div>
       </div>
     )
   }
 
-  // Not logged in — show landing page
+  // Not logged in
   if (!user) {
     return (
       <LandingPage
@@ -189,7 +244,6 @@ export default function App() {
     )
   }
 
-  // Dashboard loads immediately — no category gate
   return (
     <>
       <Dashboard
@@ -220,6 +274,10 @@ export default function App() {
         onLogout={handleLogout}
         isAdmin={isAdmin}
         onOpenAdmin={() => setShowAdmin(true)}
+        toasts={toasts}
+        onDismissToast={dismissToast}
+        soundEnabled={soundEnabled}
+        onToggleSound={handleToggleSound}
       />
       {selectedOpp && isPremium && (
         <StakeCalculator
