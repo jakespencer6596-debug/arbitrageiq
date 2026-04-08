@@ -247,6 +247,40 @@ FUZZY_THRESHOLD = 50           # rapidfuzz token_sort_ratio minimum — was 60
 MIN_SHARED_TOKENS = 2          # Must share at least 2 meaningful tokens — was 3
 MAX_PROFIT_PCT = 0.25          # 25% cap — anything higher is a matching error
 
+# ---------------------------------------------------------------------------
+# Platform tiers — CRITICAL for product quality
+# Only TRADEABLE platforms can form arb legs. Reference platforms
+# feed into value signals/discrepancies but NOT arb detection.
+# ---------------------------------------------------------------------------
+TRADEABLE_SOURCES = frozenset({
+    "polymarket", "kalshi", "predictit", "smarkets", "sxbet",
+    "betfair", "matchbook", "cloudbet", "opinion",
+    # Odds API sportsbooks
+    "draftkings", "fanduel", "betmgm", "caesars", "pointsbet",
+    "betrivers", "bovada", "bet365", "pinnacle",
+    # Odds API IO bookmakers
+    "odds_api", "odds_api_io",
+})
+
+REFERENCE_SOURCES = frozenset({
+    "manifold", "metaculus", "gjopen", "infer", "fantasyscotus",
+    "givewellopenphil", "foretold", "hypermind", "metaforecast",
+    # Metaforecast sub-sources (stored with _mf suffix sometimes)
+    "metaculus_mf", "gjopen_mf", "infer_mf", "fantasyscotus_mf",
+    "givewellopenphil_mf", "foretold_mf", "hypermind_mf",
+})
+
+def _is_tradeable(source: str) -> bool:
+    """Check if a source is a real-money tradeable platform."""
+    src = source.lower().strip()
+    if src in TRADEABLE_SOURCES:
+        return True
+    # Check substring match for sportsbook variants like "draftkings_h2h"
+    for t in TRADEABLE_SOURCES:
+        if t in src:
+            return True
+    return False
+
 
 def _bigram_similarity(name_a: str, name_b: str) -> float:
     """
@@ -315,7 +349,13 @@ def detect_arb(market_prices: list, base_stake: float = 1000.0) -> list[ArbOppor
         if implied_prob <= 0.01 or implied_prob >= 0.99:
             continue  # Skip extreme prices (noise)
 
-        # Skip events referencing past years (stale markets)
+        # CRITICAL: Only tradeable platforms can form arb legs.
+        # Reference sources (Metaculus, GJOpen, etc.) are for value
+        # signals only — you can't place bets on them.
+        if not _is_tradeable(source):
+            continue
+
+        # Skip events referencing past years (stale/resolved markets)
         import re as _re
         _past_years = {'2020', '2021', '2022', '2023', '2024'}
         _found_years = set(_re.findall(r'\b(20\d{2})\b', event_name))
@@ -643,6 +683,9 @@ def detect_multi_outcome_arb(market_prices: list, base_stake: float = 1000.0) ->
 
         if not event_name or not source or not prob or prob <= 0.01 or prob >= 0.99:
             continue
+        # Only tradeable platforms
+        if not _is_tradeable(source):
+            continue
         # Skip simple yes/no — we want named outcomes (candidates, teams)
         outcome_lower = (outcome or "").lower().strip()
         if outcome_lower in ("yes", "no", ""):
@@ -801,9 +844,13 @@ def detect_overround(market_prices: list, base_stake: float = 1000.0) -> list[Ar
         if not market_id or not implied_prob or implied_prob <= 0:
             continue
 
+        # Only tradeable platforms for overrounds
+        if not _is_tradeable(source):
+            continue
+
         # Only detect overrounds on multi-candidate platforms
-        # Skip Polymarket/Manifold (binary YES/NO markets, not multi-candidate)
-        if source in ("polymarket", "manifold"):
+        # Skip Polymarket (binary YES/NO markets, not multi-candidate)
+        if source in ("polymarket",):
             continue
 
         # Extract the parent market ID (before "_" for PredictIt)
