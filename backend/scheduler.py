@@ -540,7 +540,46 @@ async def run_arb() -> None:
         db.commit()
         logger.info(f"run_arb: saved {saved_count} arbs + {disc_count} discrepancies to DB")
 
-        # 4. Broadcast via WebSocket
+        # 4. Send alerts to users with Telegram/Discord configured
+        try:
+            from db.models import User as AlertUser
+            alert_db = SessionLocal()
+            alert_users = alert_db.query(AlertUser).filter(
+                AlertUser.alerts_enabled == True  # noqa: E712
+            ).all()
+
+            for au in alert_users:
+                min_profit = au.alert_min_profit or 0.02
+
+                # Telegram alerts
+                if au.telegram_chat_id and au.telegram_chat_id != "PENDING":
+                    try:
+                        from alerts.telegram import send_arb_alert as tg_arb
+                        for opp in opportunities[:5]:
+                            d = opp.to_dict() if hasattr(opp, 'to_dict') else opp
+                            if d.get("net_profit_pct", d.get("profit_pct", 0)) >= min_profit:
+                                await tg_arb(d)
+                    except Exception as e:
+                        logger.debug(f"Telegram alert failed for user {au.id}: {e}")
+
+                # Discord alerts
+                if au.discord_webhook_url:
+                    try:
+                        from alerts.discord import send_arb_alert as dc_arb
+                        for opp in opportunities[:5]:
+                            d = opp.to_dict() if hasattr(opp, 'to_dict') else opp
+                            if d.get("net_profit_pct", d.get("profit_pct", 0)) >= min_profit:
+                                await dc_arb(d, au.discord_webhook_url)
+                    except Exception as e:
+                        logger.debug(f"Discord alert failed for user {au.id}: {e}")
+
+            alert_db.close()
+            if alert_users:
+                logger.info(f"run_arb: checked alerts for {len(alert_users)} users")
+        except Exception as e:
+            logger.error(f"run_arb: alert dispatch failed: {e}")
+
+        # 5. Broadcast via WebSocket
         try:
             from api.routes import broadcast
 

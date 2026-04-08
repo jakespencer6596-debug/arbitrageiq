@@ -197,6 +197,13 @@ THRESHOLDS = {
 }
 
 # ---------------------------------------------------------------------------
+# Alert configuration
+# ---------------------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "PENDING")
+ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", "300"))
+
+# ---------------------------------------------------------------------------
 # FRED economic data series — used by discrepancy engine
 # ---------------------------------------------------------------------------
 FRED_SERIES = {
