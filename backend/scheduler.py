@@ -514,8 +514,14 @@ async def run_arb() -> None:
             )
             if existing:
                 existing.times_detected += 1
-                existing.last_seen_at = datetime.now(timezone.utc)
-                existing.duration_seconds = int((existing.last_seen_at - existing.first_detected_at).total_seconds())
+                now = datetime.now(timezone.utc)
+                existing.last_seen_at = now
+                # Ensure both datetimes are tz-aware for subtraction
+                first = existing.first_detected_at
+                if first and first.tzinfo is None:
+                    first = first.replace(tzinfo=timezone.utc)
+                if first:
+                    existing.duration_seconds = int((now - first).total_seconds())
                 if d.get("profit_pct", 0) > existing.peak_profit_pct:
                     existing.peak_profit_pct = d.get("profit_pct", 0)
                     existing.legs_json = d
@@ -532,9 +538,11 @@ async def run_arb() -> None:
                 ))
 
         # Expire old history entries that weren't seen this cycle
+        # Use naive UTC to match PostgreSQL's timestamp without timezone
+        expire_cutoff = datetime.utcnow() - timedelta(minutes=5)
         db.query(ArbHistory).filter(
             ArbHistory.status == "active",
-            ArbHistory.last_seen_at < datetime.now(timezone.utc) - timedelta(minutes=5),
+            ArbHistory.last_seen_at < expire_cutoff,
         ).update({"status": "expired"})
 
         db.commit()
