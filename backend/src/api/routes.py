@@ -384,6 +384,31 @@ async def make_first_admin(body: dict):
         db.close()
 
 
+@router.post("/admin/reset-password")
+async def reset_password(body: dict):
+    """Reset a user's password. Requires admin secret."""
+    import os
+    admin_secret = os.getenv("ADMIN_SECRET", "arbitrageiq-admin-setup-2026")
+    if body.get("secret") != admin_secret:
+        return JSONResponse(status_code=403, content={"error": "Invalid secret"})
+
+    email = (body.get("email") or "").strip().lower()
+    new_password = body.get("password", "")
+    if len(new_password) < 6:
+        return JSONResponse(status_code=400, content={"error": "Password must be at least 6 characters"})
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return JSONResponse(status_code=404, content={"error": f"User {email} not found"})
+        user.password_hash = hash_password(new_password)
+        db.commit()
+        return {"status": "ok", "message": f"Password reset for {email}"}
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Alert Settings
 # ---------------------------------------------------------------------------
