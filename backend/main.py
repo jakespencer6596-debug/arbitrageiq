@@ -56,9 +56,33 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database initialised")
 
-    # 1b. Cleanup stale data from previous runs to free memory on startup
+    # 1b. Purge data from removed platforms + cleanup stale data
     try:
-        from db.models import cleanup_old_data
+        from db.models import cleanup_old_data, SessionLocal, MarketPrice, ArbOpportunity, TrackedMarket
+        db = SessionLocal()
+        try:
+            # Deactivate all prices from platforms we no longer support
+            REMOVED_PLATFORMS = ["predictit", "betfair", "smarkets", "matchbook", "manifold"]
+            purged_prices = (
+                db.query(MarketPrice)
+                .filter(MarketPrice.source.in_(REMOVED_PLATFORMS))
+                .update({"is_active": False}, synchronize_session=False)
+            )
+            purged_markets = (
+                db.query(TrackedMarket)
+                .filter(TrackedMarket.source.in_(REMOVED_PLATFORMS))
+                .update({"is_active": False}, synchronize_session=False)
+            )
+            # Deactivate all arbs (fresh ones will be created on next detection cycle)
+            purged_arbs = (
+                db.query(ArbOpportunity)
+                .filter(ArbOpportunity.is_active == True)  # noqa: E712
+                .update({"is_active": False}, synchronize_session=False)
+            )
+            db.commit()
+            logger.info(f"Startup purge: deactivated {purged_prices} prices, {purged_markets} markets, {purged_arbs} arbs from removed platforms")
+        finally:
+            db.close()
         result = cleanup_old_data(max_age_hours=6, max_per_source=500)
         logger.info(f"Startup cleanup: {result}")
     except Exception as exc:

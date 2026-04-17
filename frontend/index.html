@@ -14,6 +14,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
     <script>
       tailwind.config = {
         darkMode: 'class',
@@ -165,6 +168,67 @@
 
       /* Selection color */
       ::selection { background: rgba(16,185,129,0.25); }
+
+      /* Three.js hero canvas */
+      .three-hero-canvas {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      /* 3D perspective container for tiltable card grids */
+      .perspective-container {
+        perspective: 1000px;
+      }
+
+      /* Tiltable card base */
+      .tilt-card {
+        transform-style: preserve-3d;
+        transition: transform 0.15s ease-out;
+        will-change: transform;
+        position: relative;
+      }
+
+      /* Specular highlight overlay */
+      .tilt-shine {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: radial-gradient(
+          circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+          rgba(16,185,129,0.08) 0%,
+          transparent 60%
+        );
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s;
+        z-index: 1;
+      }
+      .tilt-card:hover .tilt-shine {
+        opacity: 1;
+      }
+
+      /* Floating background shapes */
+      .floating-shape {
+        position: absolute;
+        pointer-events: none;
+        border: 1px solid rgba(16,185,129,0.06);
+        border-radius: 4px;
+        will-change: transform;
+      }
+
+      /* Reduced motion — accessibility */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+        .three-hero-canvas { display: none; }
+        .tilt-card { transform: none !important; }
+        .floating-shape { display: none; }
+      }
     </style>
   </head>
   <body class="bg-surface-0 text-gray-100 min-h-screen antialiased font-sans noise">

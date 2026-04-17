@@ -346,14 +346,30 @@ async def run_arb() -> None:
         ).update({"is_active": False})
         db.commit()
 
-        # 1. Load recent active prices — only those fetched within max age
-        # This prevents stale Metaforecast/GJOpen prices from creating false arbs
+        # 1. Deactivate prices from removed platforms (PredictIt, Betfair, etc.)
+        from constants import is_tradeable_source, TRADEABLE_SOURCES, REFERENCE_SOURCES
+        all_known = list(TRADEABLE_SOURCES | REFERENCE_SOURCES)
+        stale_removed = (
+            db.query(MarketPrice)
+            .filter(
+                MarketPrice.is_active == True,  # noqa: E712
+                MarketPrice.source.notin_(all_known),
+            )
+            .update({"is_active": False}, synchronize_session=False)
+        )
+        if stale_removed:
+            db.commit()
+            logger.info(f"run_arb: deactivated {stale_removed} prices from removed platforms")
+
+        # 2. Load recent active prices — only tradeable sources, within max age
         freshness_cutoff = datetime.utcnow() - timedelta(hours=PRICE_MAX_AGE_HOURS)
+        tradeable_list = list(TRADEABLE_SOURCES)
         prices = (
             db.query(MarketPrice)
             .filter(
                 MarketPrice.is_active == True,  # noqa: E712
                 MarketPrice.fetched_at >= freshness_cutoff,
+                MarketPrice.source.in_(tradeable_list),
             )
             .all()
         )

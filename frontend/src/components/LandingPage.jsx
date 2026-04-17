@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../api'
+import ThreeHeroBackground from './ThreeHeroBackground'
+import AnimatedCounter from './AnimatedCounter'
 
 const PLATFORMS = [
   { name: 'Polymarket', color: '#8B5CF6' },
@@ -79,6 +81,13 @@ const FAQS = [
   { q: 'What does the free plan include?', a: 'Free users can see the first 2 opportunities and browse all market categories. Premium unlocks every opportunity, consensus signals, the execution calculator, alerts, and historical analytics.' },
 ]
 
+const FLOATING_SHAPES = [
+  { top: '18%', left: '6%', size: 60, rotation: 45, speed: 0.3 },
+  { top: '42%', right: '4%', size: 40, rotation: 15, speed: 0.7 },
+  { top: '68%', left: '10%', size: 50, rotation: 30, speed: 0.4 },
+  { top: '88%', right: '12%', size: 35, rotation: 60, speed: 0.6 },
+]
+
 export default function LandingPage({ onLogin, onSignUp }) {
   const [showLogin, setShowLogin] = useState(false)
   const [isSignUp, setIsSignUp] = useState(false)
@@ -88,6 +97,21 @@ export default function LandingPage({ onLogin, onSignUp }) {
   const [loading, setLoading] = useState(false)
   const [liveStats, setLiveStats] = useState(null)
   const [openFaq, setOpenFaq] = useState(null)
+  const [scrolled, setScrolled] = useState(false)
+  const [statsVisible, setStatsVisible] = useState(false)
+
+  // Refs for GSAP animations
+  const heroRef = useRef(null)
+  const heroContentRef = useRef(null)
+  const statsSectionRef = useRef(null)
+  const featuresSectionRef = useRef(null)
+  const howItWorksSectionRef = useRef(null)
+  const pricingSectionRef = useRef(null)
+  const faqSectionRef = useRef(null)
+  const faqContentRefs = useRef([])
+  const shapesRef = useRef([])
+
+  const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
 
   useEffect(() => {
     fetch((import.meta.env.VITE_API_URL || 'http://localhost:8000') + '/api/stats')
@@ -95,6 +119,260 @@ export default function LandingPage({ onLogin, onSignUp }) {
       .then(d => setLiveStats(d))
       .catch(() => {})
   }, [])
+
+  // Nav scroll state
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 50)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // Stats section visibility for counter animation
+  useEffect(() => {
+    if (!statsSectionRef.current) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setStatsVisible(true); obs.disconnect() } },
+      { threshold: 0.3 }
+    )
+    obs.observe(statsSectionRef.current)
+    return () => obs.disconnect()
+  }, [])
+
+  // Hero entrance animation (GSAP timeline — polls until GSAP CDN loads)
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    let tl = null
+    let attempts = 0
+    const poll = setInterval(() => {
+      attempts++
+      const gsap = window.gsap
+      if (!gsap || !heroContentRef.current) {
+        if (attempts > 50) clearInterval(poll)
+        return
+      }
+      clearInterval(poll)
+
+      const ctx = heroContentRef.current
+      const words = ctx.querySelectorAll('.hero-word')
+      const subtitle = ctx.querySelector('.hero-subtitle')
+      const ctas = ctx.querySelectorAll('.hero-cta')
+      const badge = ctx.querySelector('.hero-badge')
+      const ticker = ctx.querySelector('.hero-ticker')
+
+      tl = gsap.timeline({ delay: 0.2 })
+
+      if (words.length) {
+        gsap.set(words, { y: '100%', opacity: 0 })
+        tl.to(words, { y: '0%', opacity: 1, duration: 0.8, stagger: 0.06, ease: 'power3.out' })
+      }
+      if (badge) {
+        gsap.set(badge, { scale: 0.8, opacity: 0 })
+        tl.to(badge, { scale: 1, opacity: 1, duration: 0.4, ease: 'back.out(2)' }, 0.1)
+      }
+      if (subtitle) {
+        gsap.set(subtitle, { y: 20, opacity: 0 })
+        tl.to(subtitle, { y: 0, opacity: 1, duration: 0.6 }, 0.5)
+      }
+      if (ctas.length) {
+        gsap.set(ctas, { y: 15, opacity: 0 })
+        tl.to(ctas, { y: 0, opacity: 1, duration: 0.5, stagger: 0.1 }, 0.7)
+      }
+      if (ticker) {
+        gsap.set(ticker, { opacity: 0 })
+        tl.to(ticker, { opacity: 1, duration: 0.8 }, 0.9)
+      }
+    }, 100)
+
+    return () => {
+      clearInterval(poll)
+      if (tl) tl.kill()
+    }
+  }, [])
+
+  // Master ScrollTrigger setup (polls until GSAP + ScrollTrigger CDN loads)
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    let active = true
+    let attempts = 0
+    const poll = setInterval(() => {
+      attempts++
+      if (!window.gsap || !window.ScrollTrigger) {
+        if (attempts > 50) clearInterval(poll)
+        return
+      }
+      clearInterval(poll)
+      if (!active) return
+      setupScrollAnimations()
+    }, 100)
+
+    function setupScrollAnimations() {
+    const gsap = window.gsap
+    const ScrollTrigger = window.ScrollTrigger
+
+    gsap.registerPlugin(ScrollTrigger)
+
+    // Hero parallax
+    if (heroContentRef.current && heroRef.current) {
+      gsap.to(heroContentRef.current, {
+        y: -80, opacity: 0.3, ease: 'none',
+        scrollTrigger: { trigger: heroRef.current, start: 'top top', end: 'bottom top', scrub: true }
+      })
+    }
+
+    // Stats bar entrance
+    if (statsSectionRef.current) {
+      gsap.from(statsSectionRef.current, {
+        rotateX: 3, y: 40, opacity: 0, duration: 0.8, ease: 'power2.out',
+        scrollTrigger: { trigger: statsSectionRef.current, start: 'top 85%', once: true }
+      })
+    }
+
+    // Features section
+    if (featuresSectionRef.current) {
+      const heading = featuresSectionRef.current.querySelector('.section-heading')
+      if (heading) {
+        gsap.from(heading, {
+          y: 30, opacity: 0, duration: 0.6,
+          scrollTrigger: { trigger: featuresSectionRef.current, start: 'top 80%', once: true }
+        })
+      }
+      const cards = featuresSectionRef.current.querySelectorAll('.feature-card')
+      if (cards.length) {
+        gsap.from(cards, {
+          y: 60, opacity: 0, duration: 0.7, stagger: 0.12, ease: 'power2.out',
+          scrollTrigger: { trigger: featuresSectionRef.current, start: 'top 75%', once: true }
+        })
+      }
+    }
+
+    // How it works
+    if (howItWorksSectionRef.current) {
+      const heading = howItWorksSectionRef.current.querySelector('.section-heading')
+      if (heading) {
+        gsap.from(heading, {
+          y: 30, opacity: 0, duration: 0.6,
+          scrollTrigger: { trigger: howItWorksSectionRef.current, start: 'top 80%', once: true }
+        })
+      }
+      const steps = howItWorksSectionRef.current.querySelectorAll('.step-card')
+      if (steps.length) {
+        gsap.from(steps, {
+          x: -40, opacity: 0, duration: 0.7, stagger: 0.2, ease: 'power2.out',
+          scrollTrigger: { trigger: howItWorksSectionRef.current, start: 'top 70%', once: true }
+        })
+      }
+      const stepNumbers = howItWorksSectionRef.current.querySelectorAll('.step-number')
+      if (stepNumbers.length) {
+        gsap.from(stepNumbers, {
+          scale: 0.5, opacity: 0, duration: 0.5, stagger: 0.2, delay: 0.1, ease: 'back.out(2)',
+          scrollTrigger: { trigger: howItWorksSectionRef.current, start: 'top 70%', once: true }
+        })
+      }
+    }
+
+    // Pricing
+    if (pricingSectionRef.current) {
+      const heading = pricingSectionRef.current.querySelector('.section-heading')
+      if (heading) {
+        gsap.from(heading, {
+          y: 30, opacity: 0, duration: 0.6,
+          scrollTrigger: { trigger: pricingSectionRef.current, start: 'top 80%', once: true }
+        })
+      }
+      const cards = pricingSectionRef.current.querySelectorAll('.pricing-card')
+      if (cards.length) {
+        gsap.from(cards, {
+          y: 80, opacity: 0, rotateX: 5, duration: 0.8, stagger: 0.15, ease: 'power2.out',
+          scrollTrigger: { trigger: pricingSectionRef.current, start: 'top 70%', once: true }
+        })
+      }
+      // Float the popular card
+      const popular = pricingSectionRef.current.querySelector('.pricing-popular')
+      if (popular) {
+        gsap.to(popular, {
+          y: -4, duration: 2, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 1
+        })
+      }
+    }
+
+    // FAQ section
+    if (faqSectionRef.current) {
+      gsap.from(faqSectionRef.current, {
+        y: 30, opacity: 0, duration: 0.6,
+        scrollTrigger: { trigger: faqSectionRef.current, start: 'top 80%', once: true }
+      })
+    }
+
+    // Floating background shapes parallax
+    shapesRef.current.forEach((el, i) => {
+      if (!el) return
+      const speed = FLOATING_SHAPES[i]?.speed || 0.5
+      gsap.to(el, {
+        y: -120 * speed,
+        rotation: `+=${30 * speed}`,
+        ease: 'none',
+        scrollTrigger: { trigger: 'body', start: 'top top', end: 'bottom bottom', scrub: true }
+      })
+    })
+
+    } // end setupScrollAnimations
+
+    return () => {
+      active = false
+      clearInterval(poll)
+      if (window.ScrollTrigger) window.ScrollTrigger.getAll().forEach(t => t.kill())
+    }
+  }, [])
+
+  // 3D tilt handlers
+  const handleCardTilt = useCallback((e) => {
+    if (isTouchDevice) return
+    const card = e.currentTarget
+    const rect = card.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    const rotateY = (x - 0.5) * 12
+    const rotateX = (0.5 - y) * 12
+    card.style.transform = `perspective(800px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.02, 1.02, 1.02)`
+    card.style.setProperty('--mouse-x', `${x * 100}%`)
+    card.style.setProperty('--mouse-y', `${y * 100}%`)
+  }, [isTouchDevice])
+
+  const handleCardTiltReset = useCallback((e) => {
+    e.currentTarget.style.transform = 'perspective(800px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)'
+  }, [])
+
+  // GSAP FAQ accordion
+  const toggleFaq = useCallback((index) => {
+    const gsap = window.gsap
+    const contentEl = faqContentRefs.current[index]
+
+    if (!gsap || !contentEl) {
+      setOpenFaq(openFaq === index ? null : index)
+      return
+    }
+
+    if (openFaq === index) {
+      gsap.to(contentEl, {
+        height: 0, opacity: 0, duration: 0.3, ease: 'power2.inOut',
+        onComplete: () => setOpenFaq(null)
+      })
+    } else {
+      // Close previous
+      if (openFaq !== null && faqContentRefs.current[openFaq]) {
+        gsap.to(faqContentRefs.current[openFaq], { height: 0, opacity: 0, duration: 0.25, ease: 'power2.in' })
+      }
+      setOpenFaq(index)
+      gsap.set(contentEl, { height: 'auto', opacity: 1 })
+      const fullHeight = contentEl.scrollHeight
+      gsap.fromTo(contentEl,
+        { height: 0, opacity: 0 },
+        { height: fullHeight, opacity: 1, duration: 0.35, ease: 'power2.out' }
+      )
+    }
+  }, [openFaq])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -110,10 +388,37 @@ export default function LandingPage({ onLogin, onSignUp }) {
     }
   }
 
+  // Helper to split text into word spans for GSAP animation
+  const splitWords = (text) =>
+    text.split(' ').map((word, i) => (
+      <span key={i} style={{ display: 'inline-block', overflow: 'hidden', verticalAlign: 'top' }}>
+        <span className="hero-word" style={{ display: 'inline-block' }}>
+          {word}&nbsp;
+        </span>
+      </span>
+    ))
+
   return (
-    <div className="min-h-screen bg-surface-0">
+    <div className="min-h-screen bg-surface-0 relative overflow-hidden">
+      {/* Floating background shapes */}
+      {FLOATING_SHAPES.map((shape, i) => (
+        <div
+          key={i}
+          ref={el => shapesRef.current[i] = el}
+          className="floating-shape"
+          style={{
+            top: shape.top,
+            left: shape.left,
+            right: shape.right,
+            width: shape.size,
+            height: shape.size,
+            transform: `rotate(${shape.rotation}deg)`,
+          }}
+        />
+      ))}
+
       {/* ── Nav ── */}
-      <nav className="fixed top-0 inset-x-0 z-50 glass border-b border-white/[0.04]">
+      <nav className={`fixed top-0 inset-x-0 z-50 glass border-b border-white/[0.04] transition-all duration-300 ${scrolled ? 'bg-surface-0/90 shadow-lg shadow-black/20' : ''}`}>
         <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-mint-500/15 flex items-center justify-center">
@@ -137,13 +442,15 @@ export default function LandingPage({ onLogin, onSignUp }) {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="relative pt-28 pb-20 px-5 overflow-hidden">
-        {/* Background glow */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-mint-500/[0.04] rounded-full blur-[120px] pointer-events-none" />
+      <section ref={heroRef} className="relative pt-28 pb-20 px-5 overflow-hidden" style={{ perspective: '1000px' }}>
+        {/* Three.js particle background */}
+        <ThreeHeroBackground />
+        {/* Fallback CSS glow (visible behind particles, lower opacity) */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-mint-500/[0.02] rounded-full blur-[100px] pointer-events-none" />
 
-        <div className="max-w-3xl mx-auto text-center relative">
+        <div ref={heroContentRef} className="max-w-3xl mx-auto text-center relative z-10">
           {/* Live badge */}
-          <div className="inline-flex items-center gap-2 bg-surface-2 border border-white/[0.06] rounded-full px-4 py-1.5 mb-8">
+          <div className="hero-badge inline-flex items-center gap-2 bg-surface-2 border border-white/[0.06] rounded-full px-4 py-1.5 mb-8">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-mint-400 opacity-50" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-mint-500" />
@@ -154,30 +461,30 @@ export default function LandingPage({ onLogin, onSignUp }) {
           </div>
 
           <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] font-bold text-white leading-[1.1] tracking-tight mb-6">
-            Find guaranteed profit<br className="hidden sm:block" /> across prediction markets
+            {splitWords('Find guaranteed profit across prediction markets')}
           </h1>
 
-          <p className="text-base sm:text-lg text-gray-400 max-w-xl mx-auto mb-10 leading-relaxed">
+          <p className="hero-subtitle text-base sm:text-lg text-gray-400 max-w-xl mx-auto mb-10 leading-relaxed">
             ArbitrageIQ scans 10+ exchanges simultaneously to detect price discrepancies. When the same event is priced differently across platforms, you profit — regardless of the outcome.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-14">
             <button
               onClick={() => { setShowLogin(true); setIsSignUp(true) }}
-              className="w-full sm:w-auto bg-mint-500 hover:bg-mint-400 text-surface-0 font-semibold px-7 py-3 rounded-xl text-sm transition-all shadow-lg shadow-mint-500/20 hover:shadow-mint-500/30 hover:-translate-y-0.5 active:translate-y-0"
+              className="hero-cta w-full sm:w-auto bg-mint-500 hover:bg-mint-400 text-surface-0 font-semibold px-7 py-3 rounded-xl text-sm transition-all shadow-lg shadow-mint-500/20 hover:shadow-mint-500/30 hover:-translate-y-0.5 active:translate-y-0"
             >
               Start scanning free
             </button>
             <a
               href="#pricing"
-              className="w-full sm:w-auto text-gray-400 hover:text-white font-medium px-7 py-3 rounded-xl text-sm border border-white/[0.08] hover:border-white/[0.15] hover:bg-white/[0.02] transition-all text-center"
+              className="hero-cta w-full sm:w-auto text-gray-400 hover:text-white font-medium px-7 py-3 rounded-xl text-sm border border-white/[0.08] hover:border-white/[0.15] hover:bg-white/[0.02] transition-all text-center"
             >
               View pricing
             </a>
           </div>
 
           {/* Platform ticker */}
-          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+          <div className="hero-ticker flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
             <span className="text-[10px] text-gray-600 uppercase tracking-[0.15em] font-medium">Scanning</span>
             {PLATFORMS.map(p => (
               <span key={p.name} className="text-xs font-medium text-gray-500 hover:text-gray-300 transition-colors cursor-default">{p.name}</span>
@@ -187,42 +494,46 @@ export default function LandingPage({ onLogin, onSignUp }) {
       </section>
 
       {/* ── Stats Bar ── */}
-      <section className="border-y border-white/[0.04] scan-line">
+      <section ref={statsSectionRef} className="border-y border-white/[0.04] scan-line" style={{ transformStyle: 'preserve-3d' }}>
         <div className="max-w-4xl mx-auto px-5 py-8 grid grid-cols-2 md:grid-cols-4 gap-8">
-          <StatBlock value={liveStats?.active_arbs || 0} label="Active Arbs" accent />
-          <StatBlock value={liveStats?.total_markets?.toLocaleString() || '0'} label="Markets Monitored" />
-          <StatBlock value={`${liveStats?.source_count || 10}+`} label="Data Sources" />
+          <StatBlock value={liveStats?.active_arbs || 0} label="Active Arbs" accent animate={statsVisible} />
+          <StatBlock value={liveStats?.total_markets || 0} label="Markets Monitored" animate={statsVisible} />
+          <StatBlock value={liveStats?.source_count || 10} label="Data Sources" suffix="+" animate={statsVisible} />
           <StatBlock value="24/7" label="Auto-Scanning" />
         </div>
       </section>
 
       {/* ── Features ── */}
-      <section className="max-w-5xl mx-auto px-5 py-24">
-        <div className="text-center mb-16">
+      <section ref={featuresSectionRef} className="max-w-5xl mx-auto px-5 py-24">
+        <div className="section-heading text-center mb-16">
           <p className="text-[11px] uppercase tracking-[0.2em] text-mint-400 font-semibold mb-3">Capabilities</p>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Built for serious traders</h2>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 perspective-container">
           {FEATURES.map((f, i) => (
             <div
               key={i}
-              className="group bg-surface-1 border border-white/[0.04] rounded-2xl p-6 hover:border-mint-500/20 transition-all duration-300 hover:bg-surface-2"
-              style={{ animationDelay: `${i * 80}ms` }}
+              className="feature-card group tilt-card bg-surface-1 border border-white/[0.04] rounded-2xl p-6 hover:border-mint-500/20 transition-colors duration-300 hover:bg-surface-2"
+              onMouseMove={handleCardTilt}
+              onMouseLeave={handleCardTiltReset}
             >
-              <div className="w-9 h-9 rounded-xl bg-mint-500/10 flex items-center justify-center text-mint-400 mb-4 group-hover:bg-mint-500/15 transition-colors">
-                {f.icon}
+              <div className="tilt-shine rounded-2xl" />
+              <div className="relative z-[2]">
+                <div className="w-9 h-9 rounded-xl bg-mint-500/10 flex items-center justify-center text-mint-400 mb-4 group-hover:bg-mint-500/15 transition-colors">
+                  {f.icon}
+                </div>
+                <h3 className="text-sm font-semibold text-gray-100 mb-2">{f.title}</h3>
+                <p className="text-xs text-gray-500 leading-relaxed">{f.desc}</p>
               </div>
-              <h3 className="text-sm font-semibold text-gray-100 mb-2">{f.title}</h3>
-              <p className="text-xs text-gray-500 leading-relaxed">{f.desc}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* ── How It Works ── */}
-      <section className="border-y border-white/[0.04] bg-surface-1/50">
+      <section ref={howItWorksSectionRef} className="border-y border-white/[0.04] bg-surface-1/50">
         <div className="max-w-4xl mx-auto px-5 py-24">
-          <div className="text-center mb-16">
+          <div className="section-heading text-center mb-16">
             <p className="text-[11px] uppercase tracking-[0.2em] text-mint-400 font-semibold mb-3">How it works</p>
             <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Three steps to guaranteed profit</h2>
           </div>
@@ -232,8 +543,8 @@ export default function LandingPage({ onLogin, onSignUp }) {
               { step: '02', title: 'You review the edge', desc: 'See exact profit percentages after all fees, confidence scores, and which platforms to use. Click to expand full details.' },
               { step: '03', title: 'Execute the trade', desc: 'Follow the execution plan with pre-calculated stake amounts and direct platform links. Profit regardless of outcome.' },
             ].map((s, i) => (
-              <div key={i} className="relative">
-                <span className="text-5xl font-bold text-white/[0.03] font-mono absolute -top-3 -left-1">{s.step}</span>
+              <div key={i} className="step-card relative">
+                <span className="step-number text-5xl font-bold text-white/[0.03] font-mono absolute -top-3 -left-1">{s.step}</span>
                 <div className="relative pt-8">
                   <h3 className="text-sm font-semibold text-gray-100 mb-2">{s.title}</h3>
                   <p className="text-xs text-gray-500 leading-relaxed">{s.desc}</p>
@@ -245,13 +556,13 @@ export default function LandingPage({ onLogin, onSignUp }) {
       </section>
 
       {/* ── Pricing ── */}
-      <section id="pricing" className="max-w-5xl mx-auto px-5 py-24">
-        <div className="text-center mb-16">
+      <section ref={pricingSectionRef} id="pricing" className="max-w-5xl mx-auto px-5 py-24">
+        <div className="section-heading text-center mb-16">
           <p className="text-[11px] uppercase tracking-[0.2em] text-mint-400 font-semibold mb-3">Pricing</p>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight mb-3">Start free, upgrade when ready</h2>
           <p className="text-sm text-gray-500">Cancel anytime. No hidden fees.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto perspective-container">
           {[
             { name: 'Free', price: '$0', interval: '', desc: 'See what ArbitrageIQ can do', features: ['2 visible opportunities', 'All market categories', 'Basic market data', 'Platform health status'], cta: 'Start free', popular: false },
             { name: 'Pro Weekly', price: '$49', interval: '/week', desc: 'For active traders', features: ['All arbitrage opportunities', 'Consensus signals', 'Execution calculator', 'Telegram & Discord alerts', 'Historical analytics'], cta: 'Start Pro', popular: true },
@@ -259,52 +570,57 @@ export default function LandingPage({ onLogin, onSignUp }) {
           ].map((plan) => (
             <div
               key={plan.name}
-              className={`relative rounded-2xl border p-6 flex flex-col transition-all duration-300 ${
+              className={`pricing-card tilt-card relative rounded-2xl border p-6 flex flex-col transition-colors duration-300 ${
                 plan.popular
-                  ? 'border-mint-500/30 bg-mint-500/[0.03] shadow-lg shadow-mint-500/[0.05]'
+                  ? 'pricing-popular border-mint-500/30 bg-mint-500/[0.03] shadow-lg shadow-mint-500/[0.05]'
                   : 'border-white/[0.06] bg-surface-1 hover:border-white/[0.1]'
               }`}
+              onMouseMove={handleCardTilt}
+              onMouseLeave={handleCardTiltReset}
             >
-              {plan.popular && (
-                <div className="absolute -top-3 left-6">
-                  <span className="bg-mint-500 text-surface-0 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wide">
-                    Most popular
-                  </span>
+              <div className="tilt-shine rounded-2xl" />
+              <div className="relative z-[2] flex flex-col flex-1">
+                {plan.popular && (
+                  <div className="absolute -top-9 left-0">
+                    <span className="bg-mint-500 text-surface-0 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wide">
+                      Most popular
+                    </span>
+                  </div>
+                )}
+                <h3 className="text-sm font-semibold text-gray-200 mb-1">{plan.name}</h3>
+                <p className="text-[11px] text-gray-500 mb-4">{plan.desc}</p>
+                <div className="mb-5">
+                  <span className="text-3xl font-bold text-white font-mono">{plan.price}</span>
+                  <span className="text-xs text-gray-500 ml-1">{plan.interval}</span>
                 </div>
-              )}
-              <h3 className="text-sm font-semibold text-gray-200 mb-1">{plan.name}</h3>
-              <p className="text-[11px] text-gray-500 mb-4">{plan.desc}</p>
-              <div className="mb-5">
-                <span className="text-3xl font-bold text-white font-mono">{plan.price}</span>
-                <span className="text-xs text-gray-500 ml-1">{plan.interval}</span>
+                <ul className="space-y-2.5 mb-6 flex-1">
+                  {plan.features.map((f, i) => (
+                    <li key={i} className="flex items-start gap-2.5 text-xs text-gray-400">
+                      <svg className="w-3.5 h-3.5 text-mint-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => { setShowLogin(true); setIsSignUp(true) }}
+                  className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                    plan.popular
+                      ? 'bg-mint-500 hover:bg-mint-400 text-surface-0 shadow-md shadow-mint-500/20'
+                      : 'bg-white/[0.04] hover:bg-white/[0.08] text-gray-200 border border-white/[0.06]'
+                  }`}
+                >
+                  {plan.cta}
+                </button>
               </div>
-              <ul className="space-y-2.5 mb-6 flex-1">
-                {plan.features.map((f, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-xs text-gray-400">
-                    <svg className="w-3.5 h-3.5 text-mint-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                    </svg>
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <button
-                onClick={() => { setShowLogin(true); setIsSignUp(true) }}
-                className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                  plan.popular
-                    ? 'bg-mint-500 hover:bg-mint-400 text-surface-0 shadow-md shadow-mint-500/20'
-                    : 'bg-white/[0.04] hover:bg-white/[0.08] text-gray-200 border border-white/[0.06]'
-                }`}
-              >
-                {plan.cta}
-              </button>
             </div>
           ))}
         </div>
       </section>
 
       {/* ── FAQ ── */}
-      <section className="max-w-2xl mx-auto px-5 py-24">
+      <section ref={faqSectionRef} className="max-w-2xl mx-auto px-5 py-24">
         <div className="text-center mb-12">
           <h2 className="text-2xl font-bold text-white tracking-tight">Questions</h2>
         </div>
@@ -312,7 +628,7 @@ export default function LandingPage({ onLogin, onSignUp }) {
           {FAQS.map((faq, i) => (
             <div key={i} className="border border-white/[0.04] rounded-xl overflow-hidden bg-surface-1/50">
               <button
-                onClick={() => setOpenFaq(openFaq === i ? null : i)}
+                onClick={() => toggleFaq(i)}
                 className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors"
               >
                 <span className="text-sm font-medium text-gray-200 pr-4">{faq.q}</span>
@@ -320,9 +636,13 @@ export default function LandingPage({ onLogin, onSignUp }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
-              {openFaq === i && (
-                <div className="px-5 pb-4 text-xs text-gray-500 leading-relaxed animate-fade-in">{faq.a}</div>
-              )}
+              <div
+                ref={el => faqContentRefs.current[i] = el}
+                className="overflow-hidden"
+                style={{ height: 0, opacity: 0 }}
+              >
+                <div className="px-5 pb-4 text-xs text-gray-500 leading-relaxed">{faq.a}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -389,11 +709,16 @@ export default function LandingPage({ onLogin, onSignUp }) {
   )
 }
 
-function StatBlock({ value, label, accent }) {
+function StatBlock({ value, label, accent, suffix, animate }) {
+  const isNumeric = typeof value === 'number'
   return (
     <div className="text-center">
       <p className={`text-2xl sm:text-3xl font-bold font-mono tracking-tight ${accent ? 'text-mint-400' : 'text-white'}`}>
-        {value}
+        {isNumeric && animate ? (
+          <AnimatedCounter value={value} suffix={suffix || ''} />
+        ) : (
+          <>{typeof value === 'number' ? value.toLocaleString() : value}{suffix || ''}</>
+        )}
       </p>
       <p className="text-[11px] text-gray-500 mt-1.5 uppercase tracking-[0.1em]">{label}</p>
     </div>
